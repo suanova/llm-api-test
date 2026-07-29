@@ -1,0 +1,6 @@
+# Example config. API key can also be provided via OPENAI_API_KEY env var.
+# base_url may or may not include /v1 — it's added automatically if missing.
+base_url: https://api.openai.com/v1
+models:
+  - gpt-4o-mini
+api_key: sk-REPLACE_ME
