@@ -1,0 +1,9 @@
+# Compiled binary
+/llm-api-test
+
+# Local config (contains API key)
+config.yaml
+
+# Test artifacts
+*.out
+*.log
