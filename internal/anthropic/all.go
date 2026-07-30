@@ -12,6 +12,7 @@ import (
 func All(c *Client) []runner.Case {
 	return []runner.Case{
 		&BasicCase{Client: c},
+		&StreamCase{Client: c},
 		&SystemCase{Client: c},
 		&ToolUseCase{Client: c},
 		&CacheControlCase{Client: c},

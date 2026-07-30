@@ -3,6 +3,12 @@
 
 # Local config (contains API key)
 config.yaml
+config.cuberouter.yaml
+config.astraflow.yaml
+
+# reports
+*-report.md
+*.txt
 
 # Test artifacts
 *.out

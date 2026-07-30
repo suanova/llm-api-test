@@ -22,37 +22,60 @@ type Surface struct {
 	Name string
 	// Desc is a short human-readable label.
 	Desc string
-	// build returns the case set for this surface, all sharing one client.
+	// BenchmarkDesc is the label used in benchmark mode.
+	BenchmarkDesc string
+	// build returns the compatibility case set for this surface, all sharing one client.
 	build func(baseURL, apiKey string, debug io.Writer) []runner.Case
+	// benchmarkBuild returns the benchmark case set for this surface. The prompt
+	// parameter selects the benchmark prompt style ("pong" or "long").
+	benchmarkBuild func(baseURL, apiKey string, debug io.Writer, prompt string) []runner.BenchmarkCase
 }
 
 // All is the ordered list of registered API surfaces.
 var All = []Surface{
 	{
-		Name: "responses",
-		Desc: "OpenAI Responses API (POST /responses)",
+		Name:          "responses",
+		Desc:          "OpenAI Responses API (POST /responses)",
+		BenchmarkDesc: "OpenAI Responses API (POST /responses) Benchmark",
 		build: func(baseURL, apiKey string, debug io.Writer) []runner.Case {
 			c := openai.New(baseURL, apiKey)
 			c.DebugWriter = debug
 			return responses.All(c)
 		},
+		benchmarkBuild: func(baseURL, apiKey string, debug io.Writer, prompt string) []runner.BenchmarkCase {
+			c := openai.New(baseURL, apiKey)
+			c.DebugWriter = debug
+			return []runner.BenchmarkCase{&responses.BenchmarkBasicCase{Client: c, Prompt: prompt}}
+		},
 	},
 	{
-		Name: "chat",
-		Desc: "OpenAI Chat Completions API (POST /v1/chat/completions)",
+		Name:          "chat",
+		Desc:          "OpenAI Chat Completions API (POST /v1/chat/completions)",
+		BenchmarkDesc: "OpenAI Chat Completions API (POST /v1/chat/completions) Benchmark",
 		build: func(baseURL, apiKey string, debug io.Writer) []runner.Case {
 			c := chat.New(baseURL, apiKey)
 			c.DebugWriter = debug
 			return chat.All(c)
 		},
+		benchmarkBuild: func(baseURL, apiKey string, debug io.Writer, prompt string) []runner.BenchmarkCase {
+			c := chat.New(baseURL, apiKey)
+			c.DebugWriter = debug
+			return []runner.BenchmarkCase{&chat.BenchmarkBasicCase{Client: c, Prompt: prompt}}
+		},
 	},
 	{
-		Name: "messages",
-		Desc: "Anthropic Messages API (POST /v1/messages)",
+		Name:          "messages",
+		Desc:          "Anthropic Messages API (POST /v1/messages)",
+		BenchmarkDesc: "Anthropic Messages API (POST /v1/messages) Benchmark",
 		build: func(baseURL, apiKey string, debug io.Writer) []runner.Case {
 			c := anthropic.New(baseURL, apiKey)
 			c.DebugWriter = debug
 			return anthropic.All(c)
+		},
+		benchmarkBuild: func(baseURL, apiKey string, debug io.Writer, prompt string) []runner.BenchmarkCase {
+			c := anthropic.New(baseURL, apiKey)
+			c.DebugWriter = debug
+			return []runner.BenchmarkCase{&anthropic.BenchmarkBasicCase{Client: c, Prompt: prompt}}
 		},
 	},
 }
@@ -85,9 +108,25 @@ func (s *Surface) CaseMeta() []CaseInfo {
 	return out
 }
 
-// Build returns the case set for this surface, wired to a client targeting the
+// BenchmarkCaseMeta returns the name+desc of each benchmark case in this surface.
+func (s *Surface) BenchmarkCaseMeta() []CaseInfo {
+	cases := s.benchmarkBuild("", "", nil, "")
+	out := make([]CaseInfo, len(cases))
+	for i, c := range cases {
+		out[i] = CaseInfo{Name: c.Name(), Desc: c.Desc()}
+	}
+	return out
+}
+
+// Build returns the compatibility case set for this surface, wired to a client targeting the
 // given endpoint. If debug is non-nil, HTTP request/response dumps are written
 // there.
 func (s *Surface) Build(baseURL, apiKey string, debug io.Writer) []runner.Case {
 	return s.build(baseURL, apiKey, debug)
+}
+
+// BuildBenchmark returns the benchmark case set for this surface. The prompt
+// parameter selects the benchmark prompt style ("pong" or "long").
+func (s *Surface) BuildBenchmark(baseURL, apiKey string, debug io.Writer, prompt string) []runner.BenchmarkCase {
+	return s.benchmarkBuild(baseURL, apiKey, debug, prompt)
 }
