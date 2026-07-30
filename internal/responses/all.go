@@ -16,6 +16,7 @@ import (
 func All(c *openai.Client) []runner.Case {
 	return []runner.Case{
 		&BasicCase{Client: c},
+		&StreamCase{Client: c},
 		&InstructionsCase{Client: c},
 		&VerbosityCase{Client: c},
 		&TextFormatCase{Client: c},

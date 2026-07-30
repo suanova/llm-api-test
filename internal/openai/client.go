@@ -10,12 +10,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"llm-api-test/internal/httpx"
 )
-
-const defaultTimeout = 120 * time.Second
 
 // Client posts to the /responses endpoint of a Responses-API-compatible server.
 type Client struct {
@@ -32,7 +29,9 @@ func New(baseURL, apiKey string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: defaultTimeout},
+		// No Timeout on the client — streaming responses can take a long time.
+		// Per-request timeouts are set via context in each method call.
+		HTTP: &http.Client{},
 	}
 }
 
@@ -141,6 +140,13 @@ func (c *Client) CreateResponse(ctx context.Context, req *Request) (*Response, e
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &httpx.APIError{Status: resp.StatusCode, Body: raw}
+	}
+
+	// Some servers return 200 OK with an error body even for non-streaming
+	// requests (e.g. unsupported model). The error may be plain JSON or
+	// SSE-formatted (data: {...}). Detect before trying to parse.
+	if isErrorBodyOrSSEError(raw) {
 		return nil, &httpx.APIError{Status: resp.StatusCode, Body: raw}
 	}
 

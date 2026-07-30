@@ -101,3 +101,14 @@ func List(w io.Writer, cases []Case) {
 	listTmpl.Execute(tw, rows)
 	tw.Flush()
 }
+
+func BenchmarkList(w io.Writer, cases []BenchmarkCase) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	type row struct{ Name, Desc string }
+	var rows []row
+	for _, c := range cases {
+		rows = append(rows, row{c.Name(), c.Desc()})
+	}
+	listTmpl.Execute(tw, rows)
+	tw.Flush()
+}
