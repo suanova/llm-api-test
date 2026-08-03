@@ -1,13 +1,12 @@
 # Compiled binary
 /llm-api-test
 
-# Local config (contains API key)
-config.yaml
-config.cuberouter.yaml
-config.astraflow.yaml
+# Local config (contains API key), excepting the example
+config*.yaml
+!config.example.yaml
 
 # reports
-*-report.md
+*-report-*.md
 *.txt
 
 # Test artifacts
