@@ -4,37 +4,31 @@ import (
 	"context"
 
 	"llm-api-test/internal/cases"
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// SeedCase verifies that the `seed` request parameter is accepted. We send a
-// seed and check for a 2xx response with output; we do not assert determinism,
-// since seed support and its reliability vary by provider.
+// SeedCase verifies that the endpoint accepts the seed parameter.
 type SeedCase struct {
-	Client *Client
+	client *Client
 }
 
-func (*SeedCase) Name() string { return "chat-seed" }
-func (*SeedCase) Desc() string { return "POST /v1/chat/completions accepts `seed`" }
+func (c *SeedCase) ID() string   { return "chat:seed" }
+func (c *SeedCase) Name() string { return "seed" }
+func (c *SeedCase) Desc() string { return "POST /v1/chat/completions accepts `seed`" }
 
-func (tc *SeedCase) Run(ctx context.Context, model string) *runner.Result {
+func (c *SeedCase) Run(ctx context.Context, model string) *registry.CompatResult {
+	seed := 42
 	req := &Request{
-		Model: model,
-		Messages: []Message{
-			{Role: "user", Content: "In one sentence, what is the Chat Completions API?"},
-		},
+		Model:    model,
+		Messages: []Message{{Role: "user", Content: "Reply with exactly the word: pong"}},
+		Seed:     &seed,
 	}
-	req.SetExtra("seed", 42)
-
-	resp, err := tc.Client.CreateChatCompletion(ctx, req)
+	res, err := c.client.Send(ctx, req)
 	if err != nil {
-		return cases.Fail(nil, "request with `seed` failed: %v", err)
+		return cases.Fail("request failed: %v", err)
 	}
-	if len(resp.Choices) == 0 {
-		return cases.Fail(resp.Raw, "no choices in response")
+	if res.Content == "" {
+		return cases.FailRaw(res.Raw, "no assistant output")
 	}
-	if resp.Choices[0].Message.Content == "" {
-		return cases.Fail(resp.Raw, "empty assistant message")
-	}
-	return cases.Pass("seed accepted", resp.Raw)
+	return cases.Pass("seed accepted", res.Raw)
 }

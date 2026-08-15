@@ -4,45 +4,36 @@ import (
 	"context"
 
 	"llm-api-test/internal/cases"
-	"llm-api-test/internal/openai"
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// ReasoningCase verifies that the `reasoning` parameter (effort + summary) is
-// accepted. We request effort=low and summary=auto. For models that support
-// reasoning, the response may include reasoning items; we assert only that the
-// request is accepted (2xx with output), not that reasoning items are present,
-// since non-reasoning models legitimately ignore the field.
+// ReasoningCase verifies that the endpoint accepts reasoning.effort and
+// reasoning.summary.
 type ReasoningCase struct {
-	Client *openai.Client
+	client *Client
 }
 
-func (*ReasoningCase) Name() string { return "responses-reasoning" }
-func (*ReasoningCase) Desc() string {
+func (c *ReasoningCase) ID() string   { return "responses:reasoning" }
+func (c *ReasoningCase) Name() string { return "reasoning" }
+func (c *ReasoningCase) Desc() string {
 	return "POST /responses accepts `reasoning.effort` and `reasoning.summary`"
 }
 
-func (tc *ReasoningCase) Run(ctx context.Context, model string) *runner.Result {
-	req := &openai.Request{
+func (c *ReasoningCase) Run(ctx context.Context, model string) *registry.CompatResult {
+	req := &Request{
 		Model: model,
-		Input: mustInput("What is 17 * 23? Think briefly and answer."),
-		Reasoning: &openai.Reasoning{
-			Effort:  "low",
-			Summary: "auto",
+		Input: "Reply with exactly the word: pong",
+		Reasoning: &Reasoning{
+			Effort:  "high",
+			Summary: "concise",
 		},
 	}
-	resp, err := tc.Client.CreateResponse(ctx, req)
+	res, err := c.client.Send(ctx, req)
 	if err != nil {
-		return cases.Fail(nil, "request with `reasoning` failed: %v", err)
+		return cases.Fail("request failed: %v", err)
 	}
-	if outputText(resp.Output) == "" {
-		return cases.Fail(resp.Raw, "no output_text in response")
+	if res.Content == "" && len(res.ToolCalls) == 0 {
+		return cases.FailRaw(res.Raw, "no output text")
 	}
-
-	// Best-effort: report if reasoning items were returned.
-	detail := "reasoning.effort/summary accepted"
-	if hasItemType(resp.Output, "reasoning") {
-		detail = "reasoning.effort/summary accepted (reasoning items present)"
-	}
-	return cases.Pass(detail, resp.Raw)
+	return cases.Pass("reasoning accepted", res.Raw)
 }

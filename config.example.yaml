@@ -5,8 +5,3 @@ models:
   - gpt-4o-mini
 api_key: sk-REPLACE_ME
 
-# Benchmark mode settings (used with --mode benchmark).
-# benchmark:
-#   iterations: 10     # number of iterations per case
-#   concurrency: 5    # concurrent goroutines per iteration
-#   prompt: pong      # prompt style: pong (latency-only) or long (throughput)

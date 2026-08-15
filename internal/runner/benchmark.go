@@ -3,240 +3,142 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
+
+	"llm-api-test/internal/registry"
 )
 
-// BenchmarkCase is a case that can be run in benchmark mode. It returns
-// StreamMetrics for a single streaming request, which the benchmark runner
-// aggregates into percentile summaries.
-type BenchmarkCase interface {
-	Name() string
-	Desc() string
-	RunBenchmark(ctx context.Context, model string) StreamMetrics
+// BenchmarkReport is the aggregated outcome of one benchmark case.
+type BenchmarkReport struct {
+	CaseID                  string
+	Mode                    string // latency | throughput
+	Prompt                  string // pong | long
+	Iterations              int
+	Concurrency             int
+	TotalRequests           int
+	Failed                  int
+	Stream                  bool
+	TTFB, TTFT, Total, TPOT Summary
+	TPS                     FloatSummary
+	Tokens                  struct {
+		Completion IntSummary
+		Prompt     IntSummary
+	}
+	AvgContentBytes int64
+	AvgChunks       int64
+	RPS             float64
+	TokensPerSec    float64 // usage-based tokens/s (non-streamed runs)
+	Elapsed         time.Duration
 }
 
-// BenchmarkRunner executes a BenchmarkCase repeatedly with concurrency,
-// collecting per-request metrics.
-type BenchmarkRunner struct {
-	Case        BenchmarkCase
-	Iterations  int
-	Concurrency int
-	Reporter    BenchmarkReporter
-}
-
-// Run executes the benchmark: iterations × concurrency requests, collecting
-// StreamMetrics for each. It fans out concurrency goroutines per iteration
-// (where each goroutine makes one request). Metrics are collected
-// per-request and aggregated into percentiles.
-func (r *BenchmarkRunner) Run(ctx context.Context, model string) *BenchmarkResult {
-	totalRequests := r.Iterations * r.Concurrency
-	if r.Reporter != nil {
-		r.Reporter.BenchmarkStart(r.Case.Name(), r.Case.Desc(), r.Iterations, r.Concurrency)
+// RunBenchmark runs the benchmark case `iterations` times, each time with
+// `concurrency` parallel requests (iterations × concurrency requests total),
+// and aggregates the per-request metrics. When progress is non-nil, a live
+// status line (see progressLine) is written to it and cleared when done.
+func RunBenchmark(ctx context.Context, bc registry.BenchmarkCase, model, prompt string, iterations, concurrency int, progress io.Writer) BenchmarkReport {
+	start := time.Now()
+	metrics := runWaves(ctx, bc, model, prompt, iterations, concurrency, progress)
+	if progress != nil {
+		fmt.Fprint(progress, "\r\033[K") // clear the live status line
 	}
 
-	start := time.Now()
-	metrics := make([]StreamMetrics, totalRequests)
+	r := aggregate(metrics)
+	r.CaseID = bc.ID()
+	r.Prompt = prompt
+	r.Iterations = iterations
+	r.Concurrency = concurrency
 
+	sum := 0
+	for _, m := range metrics {
+		if m.Err == nil {
+			sum += m.CompletionTokens
+		}
+	}
+	if elapsed := time.Since(start); elapsed > 0 {
+		r.RPS = float64(r.TotalRequests) / elapsed.Seconds()
+		r.TokensPerSec = float64(sum) / elapsed.Seconds()
+		r.Elapsed = elapsed
+	}
+	return r
+}
+
+// progressLine is the live status line printed while a benchmark runs.
+func progressLine(elapsed time.Duration, done, total int) string {
+	return fmt.Sprintf("[benchmark] elapsed %s, %d/%d requests completed",
+		elapsed.Round(time.Second), done, total)
+}
+
+// runWaves runs `iterations` waves of `concurrency` parallel requests.
+func runWaves(ctx context.Context, bc registry.BenchmarkCase, model, prompt string, iterations, concurrency int, progress io.Writer) []registry.Metrics {
 	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	idx := 0
-	for iter := 0; iter < r.Iterations; iter++ {
-		for g := 0; g < r.Concurrency; g++ {
+	metrics := make([]registry.Metrics, 0, iterations*concurrency)
+	total := iterations * concurrency
+	start := time.Now()
+	done := make(chan struct{})
+	defer close(done)
+	if progress != nil {
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case now := <-t.C:
+					mu.Lock()
+					n := len(metrics)
+					mu.Unlock()
+					fmt.Fprintf(progress, "\r%s", progressLine(now.Sub(start), n, total))
+				}
+			}
+		}()
+	}
+	for it := 0; it < iterations; it++ {
+		var wg sync.WaitGroup
+		for g := 0; g < concurrency; g++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				m := r.Case.RunBenchmark(ctx, model)
+				m := bc.Run(ctx, model, prompt)
 				mu.Lock()
-				metrics[idx] = m
-				idx++
+				metrics = append(metrics, *m)
 				mu.Unlock()
 			}()
 		}
-		// Wait for this batch to complete before starting the next iteration.
-		// This groups requests into iteration batches for clearer semantics,
-		// but metrics are still collected per-request.
 		wg.Wait()
-
-		if r.Reporter != nil {
-			r.Reporter.BenchmarkIteration(iter+1, r.Iterations)
-		}
 	}
-
-	elapsed := time.Since(start)
-	agg := Aggregate(metrics)
-
-	result := &BenchmarkResult{
-		Name:        r.Case.Name(),
-		Desc:        r.Case.Desc(),
-		Aggregate:   agg,
-		Elapsed:     elapsed,
-		Iterations:  r.Iterations,
-		Concurrency: r.Concurrency,
-	}
-
-	if r.Reporter != nil {
-		r.Reporter.BenchmarkResult(result)
-	}
-
-	return result
+	return metrics
 }
 
-// BenchmarkResult is the outcome of a benchmark run.
-type BenchmarkResult struct {
-	Name        string
-	Desc        string
-	Aggregate   AggregateMetrics
-	Elapsed     time.Duration
-	Iterations  int
-	Concurrency int
-	// Prompt is the benchmark prompt style ("pong" or "long"). When "pong",
-	// throughput metrics (TPOT/TPS) are hidden from output since they are
-	// not meaningful for single-token responses.
-	Prompt string
-}
-
-// BenchmarkReporter consumes benchmark events as they complete.
-type BenchmarkReporter interface {
-	BenchmarkStart(name, desc string, iterations, concurrency int)
-	BenchmarkIteration(current, total int)
-	BenchmarkResult(r *BenchmarkResult)
-}
-
-// FormatBenchmarkResult renders a BenchmarkResult as a multi-line string.
-func FormatBenchmarkResult(r *BenchmarkResult) string {
-	agg := r.Aggregate
-	totalRequests := r.Iterations * r.Concurrency
-	lines := []string{
-		fmt.Sprintf("  %s  (%d iters x %d concurrency = %d requests)",
-			r.Name, r.Iterations, r.Concurrency, totalRequests),
+// FormatBenchmarkReport renders the text report (refactor_design.md). TTFB,
+// TTFT, and TPOT require streaming and are omitted for non-streamed runs;
+// TPOT/TPS/Tokens/Output are only reported in throughput mode.
+func FormatBenchmarkReport(r BenchmarkReport) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %s  (%d iters x %d concurrency = %d requests)\n",
+		r.CaseID, r.Iterations, r.Concurrency, r.TotalRequests)
+	if r.Stream {
+		fmt.Fprintf(&b, "    TTFB:  %s\n", FormatSummary(r.TTFB))
+		fmt.Fprintf(&b, "    TTFT:  %s\n", FormatSummary(r.TTFT))
 	}
-
-	if agg.Failed > 0 {
-		lines = append(lines, fmt.Sprintf("    FAILED: %d/%d requests", agg.Failed, totalRequests))
-		// Show the first few distinct error messages so the user can diagnose.
-		seen := map[string]bool{}
-		count := 0
-		for _, m := range agg.PerRequest {
-			if m.Err == nil || count >= 3 {
-				break
-			}
-			msg := m.Err.Error()
-			if !seen[msg] {
-				seen[msg] = true
-				lines = append(lines, fmt.Sprintf("      %s", msg))
-				count++
-			}
+	fmt.Fprintf(&b, "    Total: %s\n", FormatSummary(r.Total))
+	if r.Mode == "throughput" {
+		if r.Stream {
+			fmt.Fprintf(&b, "    TPOT:  %s\n", FormatSummaryMs1(r.TPOT))
+			fmt.Fprintf(&b, "    TPS:   %s tok/s\n", FormatFloatSummary(r.TPS))
+			fmt.Fprintf(&b, "    Tokens: completion %s  prompt %s\n",
+				FormatIntSummary(r.Tokens.Completion), FormatIntSummary(r.Tokens.Prompt))
+			fmt.Fprintf(&b, "    Output: avg_content=%d bytes  avg_chunks=%d\n",
+				r.AvgContentBytes, r.AvgChunks)
+		} else {
+			fmt.Fprintf(&b, "    Tokens: %.1f tok/s (from usage)\n", r.TokensPerSec)
 		}
 	}
-
-	// Note when non-streaming fallback was used.
-	nonStreaming := 0
-	for _, m := range agg.PerRequest {
-		if m.NonStreaming && m.Err == nil {
-			nonStreaming++
-		}
-	}
-	if nonStreaming > 0 {
-		lines = append(lines, fmt.Sprintf("    Note: %d/%d requests used non-streaming fallback (server does not support streaming)", nonStreaming, agg.TotalRequests-agg.Failed))
-	}
-
-	lines = append(lines,
-		fmt.Sprintf("    %s", FormatPercentile("TTFB", agg.TTFBSummary)),
-	)
-
-	if agg.TTFTSummary.P50 > 0 {
-		lines = append(lines,
-			fmt.Sprintf("    %s", FormatPercentile("TTFT", agg.TTFTSummary)),
-		)
-	}
-
-	lines = append(lines,
-		fmt.Sprintf("    %s", FormatPercentile("Total", agg.TotalSummary)),
-	)
-
-	// Throughput metrics are only meaningful with multi-token output.
-	// Hide TPOT/TPS/Tokens/Output when using the "pong" prompt.
-	if r.Prompt != PromptPong {
-		lines = append(lines,
-			fmt.Sprintf("    %s", FormatPercentileMicros("TPOT", agg.TPOTSummary)),
-			fmt.Sprintf("    TPS:   p50=%.1f  p95=%.1f  p99=%.1f  min=%.1f  max=%.1f tok/s",
-				agg.TPSSummary.P50, agg.TPSSummary.P95, agg.TPSSummary.P99,
-				agg.TPSSummary.Min, agg.TPSSummary.Max),
-			fmt.Sprintf("    Tokens: completion p50=%d p95=%d p99=%d  prompt p50=%d p95=%d p99=%d",
-				agg.Tokens.CompletionP50, agg.Tokens.CompletionP95, agg.Tokens.CompletionP99,
-				agg.Tokens.PromptP50, agg.Tokens.PromptP95, agg.Tokens.PromptP99),
-		)
-
-		// Show reasoning tokens if any were detected (thinking/reasoning models).
-		if agg.Tokens.ReasoningP50 > 0 || agg.Tokens.ReasoningP95 > 0 {
-			lines = append(lines,
-				fmt.Sprintf("    Reasoning: p50=%d p95=%d p99=%d",
-					agg.Tokens.ReasoningP50, agg.Tokens.ReasoningP95, agg.Tokens.ReasoningP99),
-			)
-		}
-
-		// Add content size and chunk count stats for sanity-checking token counts.
-		contentStats := computeContentStats(agg.PerRequest)
-		if contentStats.AvgContentLen > 0 || contentStats.AvgChunkCount > 0 {
-			lines = append(lines,
-				fmt.Sprintf("    Output: avg_content=%d bytes  avg_chunks=%d  (content_len/chunks ≈ %.1f bytes/chunk)",
-					contentStats.AvgContentLen, contentStats.AvgChunkCount,
-					contentStats.BytesPerChunk),
-			)
-		}
-	}
-
-	lines = append(lines,
-		fmt.Sprintf("    Elapsed: %s", r.Elapsed.Round(time.Millisecond)),
-	)
-
-	return joinLines(lines)
-}
-
-// contentStats holds aggregate content size information for sanity-checking.
-type contentStats struct {
-	AvgContentLen int
-	AvgChunkCount int
-	BytesPerChunk float64
-}
-
-func computeContentStats(metrics []StreamMetrics) contentStats {
-	var totalLen, totalChunks, count int
-	for _, m := range metrics {
-		if m.Err != nil {
-			continue
-		}
-		if m.ContentLen > 0 || m.ChunkCount > 0 {
-			totalLen += m.ContentLen
-			totalChunks += m.ChunkCount
-			count++
-		}
-	}
-	if count == 0 {
-		return contentStats{}
-	}
-	avgLen := totalLen / count
-	avgChunks := totalChunks / count
-	var bpc float64
-	if avgChunks > 0 {
-		bpc = float64(avgLen) / float64(avgChunks)
-	}
-	return contentStats{
-		AvgContentLen: avgLen,
-		AvgChunkCount: avgChunks,
-		BytesPerChunk: bpc,
-	}
-}
-
-func joinLines(lines []string) string {
-	var b []byte
-	for i, l := range lines {
-		if i > 0 {
-			b = append(b, '\n')
-		}
-		b = append(b, l...)
-	}
-	return string(b)
+	fmt.Fprintf(&b, "    RPS:    %.1f req/s\n", r.RPS)
+	fmt.Fprintf(&b, "    Failed: %d/%d\n", r.Failed, r.TotalRequests)
+	fmt.Fprintf(&b, "    Elapsed: %s\n", r.Elapsed.Round(100*time.Millisecond))
+	return b.String()
 }

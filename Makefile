@@ -37,10 +37,10 @@ install: build ## Install binary to GOBIN or $(PREFIX)/bin
 		echo "installed -> $(PREFIX)/bin/$(BINARY)"; \
 	fi
 
-## run: build then run all cases (pass ARGS=... to filter, e.g. make run ARGS='responses-basic')
+## run: build then run compatibility tests (pass ARGS=... to filter, e.g. make run ARGS='chat:seed')
 .PHONY: run
-run: build ## Build and run cases (ARGS="case1 case2")
-	./$(BINARY) run $(ARGS)
+run: build ## Build and run compatibility tests (ARGS="test1 test2")
+	./$(BINARY) compatibility $(ARGS)
 
 ## list: build then list available cases
 .PHONY: list

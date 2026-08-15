@@ -4,31 +4,30 @@ import (
 	"context"
 
 	"llm-api-test/internal/cases"
-	"llm-api-test/internal/openai"
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// BasicCase verifies that the Responses API endpoint returns an output message
-// with non-empty text for a simple prompt.
+// BasicCase verifies that the endpoint returns output text for a simple
+// prompt.
 type BasicCase struct {
-	Client *openai.Client
+	client *Client
 }
 
-func (*BasicCase) Name() string { return "responses-basic" }
-func (*BasicCase) Desc() string { return "POST /responses returns output text for a simple prompt" }
+func (c *BasicCase) ID() string   { return "responses:basic" }
+func (c *BasicCase) Name() string { return "basic" }
+func (c *BasicCase) Desc() string { return "POST /responses returns output text for a simple prompt" }
 
-func (tc *BasicCase) Run(ctx context.Context, model string) *runner.Result {
-	req := &openai.Request{
+func (c *BasicCase) Run(ctx context.Context, model string) *registry.CompatResult {
+	req := &Request{
 		Model: model,
-		Input: mustInput("Reply with exactly the word: pong"),
+		Input: "Reply with exactly the word: pong",
 	}
-	resp, err := tc.Client.CreateResponse(ctx, req)
+	res, err := c.client.Send(ctx, req)
 	if err != nil {
-		return cases.Fail(nil, "request failed: %v", err)
+		return cases.Fail("request failed: %v", err)
 	}
-	text := outputText(resp.Output)
-	if text == "" {
-		return cases.Fail(resp.Raw, "no output_text in response output (output items: %d)", len(resp.Output))
+	if res.Content == "" && len(res.ToolCalls) == 0 {
+		return cases.FailRaw(res.Raw, "no output text")
 	}
-	return cases.Pass("output_text present", resp.Raw)
+	return cases.Pass("output text present", res.Raw)
 }

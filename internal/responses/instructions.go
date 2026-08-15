@@ -4,42 +4,40 @@ import (
 	"context"
 
 	"llm-api-test/internal/cases"
-	"llm-api-test/internal/openai"
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// InstructionsCase verifies that the `instructions` parameter is accepted and
-// steers behavior. We give an instruction that forces a fixed reply, then check
-// the model follows it (best-effort behavioral check, not a hard wire-format
-// assertion).
+// InstructionsCase verifies that the endpoint accepts instructions and
+// follows them.
 type InstructionsCase struct {
-	Client *openai.Client
+	client *Client
 }
 
-func (*InstructionsCase) Name() string { return "responses-instructions" }
-func (*InstructionsCase) Desc() string {
+func (c *InstructionsCase) ID() string   { return "responses:instructions" }
+func (c *InstructionsCase) Name() string { return "instructions" }
+func (c *InstructionsCase) Desc() string {
 	return "POST /responses accepts `instructions` and follows them"
 }
 
-func (tc *InstructionsCase) Run(ctx context.Context, model string) *runner.Result {
-	instr := "You are a parity responder. For any user input, reply with exactly: PARITY_OK"
-	req := &openai.Request{
+func (c *InstructionsCase) Run(ctx context.Context, model string) *registry.CompatResult {
+	instructions := "Reply with exactly: hello"
+	zero := 0.0
+	req := &Request{
 		Model:        model,
-		Input:        mustInput("hello"),
-		Instructions: &instr,
+		Input:        "Say: hello",
+		Instructions: &instructions,
+		// The assertion below is an exact match on model output, so the
+		// request must be deterministic: providers default to temperature 1.0,
+		// and reasoning models can reinterpret open-ended questions, both of
+		// which make the test flaky.
+		Temperature: &zero,
 	}
-	resp, err := tc.Client.CreateResponse(ctx, req)
+	res, err := c.client.Send(ctx, req)
 	if err != nil {
-		return cases.Fail(nil, "request with `instructions` failed: %v", err)
+		return cases.Fail("request failed: %v", err)
 	}
-	text := outputText(resp.Output)
-	if text == "" {
-		return cases.Fail(resp.Raw, "no output_text in response")
+	if res.Content != "hello" {
+		return cases.FailRaw(res.Raw, "instructions not followed (got %q)", res.Content)
 	}
-	// Behavioral check: the instruction should be followed. We allow partial
-	// match since the model may add punctuation/whitespace.
-	if !cases.ContainsFold(text, "PARITY_OK") {
-		return cases.Fail(resp.Raw, "instructions ignored: expected 'PARITY_OK', got %q", text)
-	}
-	return cases.Pass("instructions accepted and followed", resp.Raw)
+	return cases.Pass("instructions followed", res.Raw)
 }

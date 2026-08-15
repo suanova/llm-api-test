@@ -13,22 +13,7 @@ type Config struct {
 	BaseURL string   `yaml:"base_url"`
 	Models  []string `yaml:"models"`
 	APIKey  string   `yaml:"api_key"`
-	// Benchmark settings (used when --mode benchmark).
-	Benchmark BenchmarkConfig `yaml:"benchmark,omitempty"`
 }
-
-// BenchmarkConfig holds benchmark-mode parameters.
-type BenchmarkConfig struct {
-	Iterations  int    `yaml:"iterations,omitempty"`
-	Concurrency int    `yaml:"concurrency,omitempty"`
-	Prompt      string `yaml:"prompt,omitempty"`
-}
-
-// PromptPong and PromptLong are the valid prompt styles for benchmark mode.
-const (
-	PromptPong = "pong"
-	PromptLong = "long"
-)
 
 // Load reads config.yaml (if present) and applies env overrides.
 // Env wins over file for the values it sets:
@@ -73,17 +58,6 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("api_key is required (config.yaml or OPENAI_API_KEY)")
-	}
-
-	// Apply defaults for benchmark config.
-	if cfg.Benchmark.Iterations <= 0 {
-		cfg.Benchmark.Iterations = 10
-	}
-	if cfg.Benchmark.Concurrency <= 0 {
-		cfg.Benchmark.Concurrency = 5
-	}
-	if cfg.Benchmark.Prompt == "" {
-		cfg.Benchmark.Prompt = PromptPong
 	}
 
 	return cfg, nil
