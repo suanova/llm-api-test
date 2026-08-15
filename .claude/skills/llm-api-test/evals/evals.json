@@ -1,0 +1,23 @@
+{
+  "skill_name": "llm-api-test",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "帮我用 llm-api-test 测一下 deepseek 的 API 兼容性，跑完给我出一份报告",
+      "expected_output": "A markdown compatibility report saved under reports/, produced by running ./llm-api-test compatibility against the deepseek config(s). Should run all api-formats (default all) against the right configs (chat/responses from config.deepseek.yaml, messages from config.deepseek.anthropic.yaml), summarize PASS/FAIL per case, and explain any failures.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "对比一下 deepseek 官方和 cuberouter 的响应延迟，用 responses API，出个对比报告",
+      "expected_output": "A markdown comparison report: latency benchmark (--mode latency, --api-format responses) run on both config.deepseek.yaml and config.cuberouter.yaml, results compared side by side (p50/p95/p99 Total, TTFB, failures), with a speed-gap and stability analysis and a recommendation. Structured JSON (-o) saved for table building.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "跑个 deepseek chat 的 throughput 看看，3x3，然后出报告",
+      "expected_output": "A markdown throughput report: ./llm-api-test benchmark --mode throughput --api-format chat -c config.deepseek.yaml --iterations 3 --concurrency 3, with TPOT/TPS/Tokens/Output indicators, cost warning given before running, JSON report saved, and a report file with the results.",
+      "files": []
+    }
+  ]
+}
