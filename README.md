@@ -7,50 +7,51 @@ accepts and returns.
 
 ## What it tests
 
-Select an API surface with `--api` (default: `all`). Available values: `all`, `responses`, `chat`, `messages`.
+Each API format has a set of compatibility cases with stable IDs
+(`<format>:<name>`). All requests are streamed by default (`--no-stream`
+disables streaming); "accepted" means the endpoint returns 2xx and a usable
+response.
 
-### Responses API (`--api responses`, `POST /responses`)
-
-| Case | Feature under test | Assertion |
-|---|---|---|
-| `responses-basic` | Responses API supported | returns output text |
-| `responses-stream` | `stream=true` supported | SSE content deltas received |
-| `responses-instructions` | `instructions` param | accepted and followed |
-| `responses-verbosity` | `text.verbosity` param | accepted (2xx + output) |
-| `responses-text-format` | `text.format` (`json_schema`) | accepted and output_text is schema-conformant JSON |
-| `responses-prompt-cache-key` | `prompt_cache_key` param | accepted across 2 calls |
-| `responses-reasoning` | `reasoning.effort` / `reasoning.summary` | accepted (2xx + output) |
-| `responses-tool-call` | custom function tools | emits `function_call` output item with parseable args |
-
-### Chat Completions API (`--api chat`, `POST /v1/chat/completions`)
+### Chat Completions (`--api-format chat`, `POST /v1/chat/completions`)
 
 | Case | Feature under test | Assertion |
 |---|---|---|
-| `chat-basic` | Chat Completions supported | returns an assistant message |
-| `chat-stream` | `stream=true` supported | SSE content deltas received |
-| `chat-system-message` | system message | accepted and followed |
-| `chat-tool-call` | custom function tools | emits `tool_calls` with parseable arguments |
-| `chat-response-format` | `response_format` (`json_schema`) | accepted and content is schema-conformant JSON |
-| `chat-seed` | `seed` param | accepted (2xx + output) |
+| `chat:basic` | Chat Completions supported | returns an assistant message |
+| `chat:system-message` | system message | accepted and followed |
+| `chat:response_format` | `response_format` (`json_object`) | accepted and content is JSON |
+| `chat:seed` | `seed` param | accepted (2xx + output) |
+| `chat:tool-call` | custom function tools | emits `tool_calls` with parseable arguments |
 
-### Anthropic Messages API (`--api messages`, `POST /v1/messages`)
+### Responses API (`--api-format responses`, `POST /responses`)
 
 | Case | Feature under test | Assertion |
 |---|---|---|
-| `messages-basic` | Messages API supported | returns a text content block |
-| `messages-stream` | `stream=true` supported | SSE content deltas received |
-| `messages-system` | top-level `system` param | accepted and followed |
-| `messages-tool-use` | custom function tools | emits `tool_use` content block with parseable input |
-| `messages-cache-control` | `cache_control` on system blocks | accepted (2xx + output) |
-| `messages-thinking` | `thinking` (extended thinking) | accepted (2xx + output) |
+| `responses:basic` | Responses API supported | returns output text |
+| `responses:instructions` | `instructions` param | accepted and followed |
+| `responses:reasoning` | `reasoning.effort` / `reasoning.summary` | accepted (2xx + output) |
+| `responses:text.format` | `text.format` (`json_schema`) | accepted and output is schema-conformant JSON |
+| `responses:text.verbosity` | `text.verbosity` param | accepted (2xx + output) |
+| `responses:prompt_cache_key` | `prompt_cache_key` param | accepted |
+| `responses:tool-call` | custom function tools | emits `function_call` output item with parseable args |
 
-All tool cases use a **custom `function` tool** (`get_weather`) rather than
-built-in tools, so they work against any compatible endpoint.
+### Anthropic Messages API (`--api-format messages`, `POST /v1/messages`)
+
+| Case | Feature under test | Assertion |
+|---|---|---|
+| `messages:basic` | Messages API supported | returns a text content block |
+| `messages:system` | top-level `system` param | accepted and followed |
+| `messages:thinking` | `thinking` (extended thinking) | accepted (2xx + output) |
+| `messages:cache_control` | `cache_control` on system blocks | accepted |
+| `messages:tool-use` | custom function tools | emits `tool_use` content block with parseable input |
+
+Tool cases use a custom `function` tool (`get_weather`) rather than built-in
+tools, so they work against any compatible endpoint.
 
 ## Install / build
 
 ```bash
 go build -o llm-api-test ./cmd/llm-api-test
+# or: make build
 ```
 
 ## Configure
@@ -62,24 +63,14 @@ cp config.example.yaml config.yaml
 ```
 
 ```yaml
-base_url: https://api.openai.com/v1    # /v1 is added automatically if omitted
+base_url: https://api.openai.com/v1    # /v1 is added automatically if missing
 models:
   - gpt-4o-mini
 api_key: sk-REPLACE_ME
 ```
 
-To test several models against the same endpoint, list them:
-
-```yaml
-base_url: https://api.openai.com/v1    # /v1 is added automatically if omitted
-models:
-  - gpt-4o-mini
-  - gpt-4.1-mini
-api_key: sk-REPLACE_ME
-```
-
-Each model runs the full case set in turn, with a `=== model: <name> ===`
-header and its own summary line.
+To test several models against the same endpoint, list them; each model runs
+the full case set in turn.
 
 Any field can also be set via environment variables, which override the file:
 
@@ -93,204 +84,177 @@ So you can keep the key out of the file entirely:
 export OPENAI_API_KEY=sk-...
 ```
 
+CLI flags override config: `--base-url`, `--api-key`, `-m/--models`.
+
 ## Run
 
-### Compatibility mode (default)
+Common flags (all subcommands):
+
+```
+      --base-url string      base URL, overrides config `base_url`
+      --api-key string       API key, overrides config `api_key`
+  -m, --models stringArray   models to test, overrides config `models`
+  -c, --config string        path to config file (default "config.yaml")
+      --no-stream            disable streaming (default: requests are streamed)
+      --http-debug           dump HTTP request/response to stderr (sensitive headers redacted)
+  -o, --out string           write the JSON report to this file; text report still goes to stdout
+  -v, --verbose              print raw response body on each case
+```
+
+### Compatibility
 
 ```bash
-# all cases across all API surfaces (default --api all)
-./llm-api-test run
+# all cases across all API formats (default --api-format all)
+./llm-api-test compatibility
 
-# only Responses API cases
-./llm-api-test run -a responses
+# only one API format
+./llm-api-test compatibility --api-format chat
 
-# only Chat Completions cases
-./llm-api-test run -a chat
+# subset selection
+./llm-api-test compatibility chat:seed            # one exact test
+./llm-api-test compatibility seed                 # every test named seed
+./llm-api-test compatibility chat                 # all chat tests
 
-# only Anthropic Messages cases
-./llm-api-test run -a messages
-
-# a subset
-./llm-api-test run responses-basic responses-tool-call
-./llm-api-test run -a chat chat-basic chat-tool-call
-
-# override the model(s) from config (repeatable; runs each model in turn)
-./llm-api-test run -m gpt-4o-mini -m gpt-4.1-mini
-
-# a single case (one subcommand per case; auto-selects the API surface)
-./llm-api-test responses-tool-call
-./llm-api-test chat-tool-call
-
-# list all available cases (default: all surfaces)
+# list available tests, grouped by API format
 ./llm-api-test list
-./llm-api-test list -a responses
-./llm-api-test list -a chat
-./llm-api-test list -a messages
-
-# print the raw response body for each case on success/failure
-./llm-api-test run -v
-
-# dump full HTTP request/response to stderr (sensitive headers redacted)
-./llm-api-test run --http-debug
-
-# tee a clean report copy to a file (stdout still shows live progress)
-./llm-api-test run -o report.txt
+./llm-api-test list --api-format chat
 ```
 
-### Benchmark mode
+### Benchmark
 
-Benchmark mode measures streaming latency and throughput using repeated
-concurrent SSE requests. It reports percentiles (p50/p95/p99) for TTFB, TTFT,
-TPOT, and TPS.
-
-The `--prompt` flag selects the benchmark prompt style:
-
-- **`pong`** (default): sends "Reply with exactly the word: pong" — measures pure latency (TTFB, TTFT, Total). TPOT/TPS are hidden since they are not meaningful for single-token responses.
-- **`long`**: sends "Write a short paragraph about the weather." with `max_tokens=256` — measures both latency and throughput (TPOT, TPS, token counts).
+Benchmark mode runs `iterations` waves of `concurrency` parallel streamed
+requests and reports percentiles (p50/p95/p99/min/max).
 
 ```bash
-# default: latency-only benchmark (pong prompt)
-./llm-api-test run --mode benchmark
+# latency benchmark (prompt: "Reply with exactly the word: pong")
+./llm-api-test benchmark --mode latency
 
-# throughput benchmark (long prompt)
-./llm-api-test run --mode benchmark --prompt long
+# throughput benchmark (long, thorough prompt)
+./llm-api-test benchmark --mode throughput
 
-# only Chat Completions benchmarks
-./llm-api-test run --mode benchmark -a chat
-
-# custom iterations and concurrency
-./llm-api-test run --mode benchmark --iterations 20 --concurrency 10
-
-# a single benchmark case
-./llm-api-test benchmark-chat-basic
-
-# combine with model and output flags
-./llm-api-test run --mode benchmark -m gpt-4o-mini -o bench-report.txt
+# only Chat Completions; custom iterations/concurrency
+./llm-api-test benchmark --mode throughput --api-format chat --iterations 10 --concurrency 5
 ```
 
-Benchmark config can also go in `config.yaml`:
-
-```yaml
-base_url: https://api.openai.com/v1
-models:
-  - gpt-4o-mini
-api_key: sk-REPLACE_ME
-benchmark:
-  iterations: 10
-  concurrency: 5
-```
-
-CLI flags (`--iterations`, `--concurrency`) override config values.
+Latency mode reports TTFB/TTFT/Total; throughput mode additionally reports
+TPOT, TPS, and token counts. With `--no-stream`, TTFB/TTFT/TPOT are omitted
+(they require streaming) and throughput falls back to tokens/s from usage.
+Benchmark requests cap generation at 4096 tokens (`max_completion_tokens` for
+chat, `max_output_tokens` for responses, `max_tokens` for messages) so a
+thorough prompt cannot run unbounded; the benchmark context timeout (120s per
+request, minimum 10 minutes) is the backstop. While a benchmark runs, a live
+status line is printed to stderr (`[benchmark] elapsed 5s, 3/10 requests
+completed`) and cleared when the report prints.
 
 ### Exit codes
 
 - `0` — all cases passed
 - `1` — one or more cases failed
-- `2` — config error (missing `base_url` / `model` / `api_key`) or unknown `--api`
+- `2` — config or argument error
 
 ## Output
 
-Output is grouped by API surface, with a header showing the endpoint and model:
+Compatibility output is grouped by API format, with a header showing the
+endpoint and model:
 
 ```
-base_url: https://api.openai.com  model: gpt-4o-mini
-OpenAI Responses API (POST /responses) Compatibility
-  PASS  responses-basic  (runtime=412ms) output_text present
-  PASS  responses-tool-call  (runtime=1.2s) function_call to get_weather with args=...
-  PASS  2/2 cases passed  (total=1.612s)
+base_url: https://api.openai.com/v1  model: gpt-4o-mini
+OpenAI Chat Completions (POST /v1/chat/completions) Compatibility
 
-OpenAI Chat Completions API (POST /v1/chat/completions) Compatibility
-  PASS  chat-basic  (runtime=301ms) assistant message present
-  FAIL  chat-response-format  (runtime=289ms) request with `response_format=json_schema` failed: ...
-  PASS  1/2 cases passed  (total=590ms)
+  chat:basic              PASS  assistant message present
+  chat:system-message     PASS  system message followed
+  chat:response_format    PASS  JSON response
+  chat:seed               PASS  seed accepted
+  chat:tool-call          PASS  tool_calls returned
 ```
 
-Each case prints one line showing `runtime=` (wall-clock time for that case,
-rounded to milliseconds). Each surface ends with a summary line showing
-`total=` (sum of per-case runtimes). When testing multiple models, a new
-header is printed before each model's results.
+Failures print the reason instead of the pass detail:
+
+```
+  chat:response_format    FAIL  request failed: HTTP 400: {"error":...}
+```
 
 ### Benchmark output
 
-With `--prompt pong` (default, latency-only):
+Latency mode:
 
 ```
-base_url: https://api.openai.com  model: gpt-4o-mini
-OpenAI Chat Completions API (POST /v1/chat/completions) Benchmark
-  iterations=10  concurrency=5  prompt=pong
+base_url: https://api.openai.com/v1  model: gpt-4o-mini
+iterations=10  concurrency=5  prompt=Reply with exactly the word: pong
 
-  benchmark-chat-basic  (10 iters x 5 concurrency = 50 requests)
+  chat:benchmark  (10 iters x 5 concurrency = 50 requests)
     TTFB:  p50=180ms p95=410ms p99=590ms min=120ms max=620ms
     TTFT:  p50=210ms p95=450ms p99=620ms min=150ms max=680ms
     Total: p50=380ms p95=620ms p99=890ms min=250ms max=950ms
+    RPS:    11.9 req/s
+    Failed: 0/50
     Elapsed: 4.2s
 ```
 
-With `--prompt long` (throughput):
+Throughput mode adds TPOT/TPS/Tokens/Output:
 
 ```
-base_url: https://api.openai.com  model: gpt-4o-mini
-OpenAI Chat Completions API (POST /v1/chat/completions) Benchmark
-  iterations=10  concurrency=5  prompt=long
-
-  benchmark-chat-basic  (10 iters x 5 concurrency = 50 requests)
+  chat:benchmark  (10 iters x 5 concurrency = 50 requests)
     TTFB:  p50=180ms p95=410ms p99=590ms min=120ms max=620ms
     TTFT:  p50=210ms p95=450ms p99=620ms min=150ms max=680ms
     Total: p50=1.2s p95=2.1s p99=2.8s min=900ms max=3.1s
     TPOT:  p50=18.5ms p95=24.2ms p99=32.1ms min=12.0ms max=38.5ms
     TPS:   p50=54.0  p95=41.0  p99=31.0  min=26.0  max=83.0 tok/s
     Tokens: completion p50=52 p95=58 p99=64  prompt p50=15 p95=15 p99=15
-    Output: avg_content=234 bytes  avg_chunks=52  (content_len/chunks ≈ 4.5 bytes/chunk)
+    Output: avg_content=234 bytes  avg_chunks=52
+    RPS:    11.9 req/s
+    Failed: 0/50
     Elapsed: 15.2s
 ```
+
+`-o report.json` writes machine-readable JSON reports (one object per
+model/format run); see `docs/design.md` for the schema.
 
 ## Project layout
 
 ```
 cmd/llm-api-test/main.go     # entrypoint
-internal/cmd/cmd.go          # cobra CLI: run / list / --api / --model / --mode / --out
-internal/config/config.go    # config.yaml + env overrides
-internal/apis/apis.go        # API surface registry (responses, chat, ...)
-internal/openai/client.go    # raw HTTP client for POST /responses
-internal/openai/stream.go    # SSE streaming client for POST /responses
-internal/chat/client.go      # raw HTTP client for POST /v1/chat/completions
-internal/chat/stream.go      # SSE streaming client for POST /v1/chat/completions
-internal/anthropic/client.go # raw HTTP client for POST /v1/messages
-internal/anthropic/stream.go # SSE streaming client for POST /v1/messages
-internal/sse/sse.go          # minimal SSE event parser
-internal/httpx/httpx.go      # shared HTTP helpers (debug dump, error type)
-internal/runner/             # Case interface + BenchmarkCase + result/metrics reporting
-internal/cases/              # shared helpers (Fail, Pass, ContainsFold, MustJSON)
-internal/responses/          # Responses API cases (one file per feature)
-internal/chat/               # Chat Completions cases (one file per feature)
-internal/anthropic/          # Anthropic Messages cases (one file per feature)
+internal/cmd/                # cobra CLI: compatibility / benchmark / list
+internal/chat/               # Chat Completions format: client, cases, benchmark
+internal/responses/          # Responses format: client, cases, benchmark
+internal/messages/           # Anthropic Messages format: client, cases, benchmark
+internal/openai/             # shared OpenAI HTTP plumbing (used by chat + responses)
+internal/registry/           # shared types: Format, CompatCase, BenchmarkCase, Metrics
+internal/runner/             # format-agnostic runner: RunCompat, RunBenchmark, reports
+internal/cases/              # shared helpers: Pass/Fail, MustJSON, benchmark prompts
+internal/config/             # config.yaml + env overrides
+internal/httpx/              # HTTP debug dump helpers
+internal/sse/                # minimal SSE event parser
+docs/design.md               # detailed design spec (CLI, JSON report schema)
 config.example.yaml          # sample config
 ```
 
 ## Adding a compatibility case
 
-1. Create a file in `internal/responses/` or `internal/chat/` implementing
-   `runner.Case` (`Name`, `Desc`, `Run(ctx, model)`).
-   The struct must hold a `Client` field (set by `All()`).
-2. Register it in `All()` in the package's `all.go`.
-3. A subcommand named after the case is registered automatically.
+1. Create a file in the format package (e.g. `internal/chat/`) implementing
+   `registry.CompatCase` (`ID`, `Name`, `Desc`, `Run(ctx, model)`). The struct
+   closes over the format's `*Client`.
+2. Append it to the ordered case list returned by the format's `Format()`
+   descriptor in the package's `cases.go` (the first entry is the basic test;
+   when it fails, the runner skips the rest).
+3. No CLI changes needed — `compatibility`, `list`, and the JSON report pick
+   the new case up automatically.
 
 ## Adding a benchmark case
 
-1. Create a file in the surface package (e.g. `internal/chat/benchmark_foo.go`)
-   implementing `runner.BenchmarkCase` (`Name`, `Desc`, `RunBenchmark(ctx, model)`).
-   The struct must hold a `Client` field.
-2. Register it in the surface's `benchmarkBuild` closure in
-   `internal/apis/apis.go`.
-3. A subcommand named after the case is registered automatically.
+1. Implement `registry.BenchmarkCase` (`ID`, `Desc`, `Run(ctx, model, prompt)`)
+   in the format package.
+2. Wire it into `Format().Benchmark` in the package's `cases.go`.
+3. `benchmark` runs one case per format; add your format to the composition
+   root (`formats` in `internal/cmd/compatibility.go`) if it is new.
 
 ## Adding an API surface
 
-1. Create a client package (e.g. `internal/anthropic/`) following the pattern
-   in `internal/openai/client.go` or `internal/chat/client.go`.
-2. Create a cases package (e.g. `internal/anthropic/`) with `All(client)` and
-   case files.
-3. Register the surface in `internal/apis/apis.go` — add an entry to the
-   `All` slice with `Name`, `Desc`, and a `build` closure.
-4. The CLI picks it up automatically: `--api <name>`, `list -a <name>`, and
-   per-case subcommands.
+1. Create a package (e.g. `internal/messages/`) with a client, per-case files,
+   a benchmark case, and a `Format()` descriptor — follow `internal/chat/`.
+   `messages` shows the non-OpenAI pattern: `x-api-key` auth and its own HTTP
+   client; `chat` and `responses` share `internal/openai`.
+2. Register the descriptor in the `formats` slice in
+   `internal/cmd/compatibility.go` (the composition root).
+3. The CLI picks it up automatically: `--api-format <name>`, `list`, and
+   `compatibility <name>:<case>` selection.

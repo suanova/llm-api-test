@@ -5,6 +5,8 @@
 config*.yaml
 !config.example.yaml
 
+.codegraph
+
 # reports
 *-report-*.md
 *.txt
@@ -12,3 +14,6 @@ config*.yaml
 # Test artifacts
 *.out
 *.log
+
+# Skill eval workspace (iteration runs, review pages)
+.claude/skills/llm-api-test-workspace/
