@@ -26,6 +26,9 @@ func TestCacheSession(t *testing.T) {
 		requests = append(requests, req)
 		turn := len(requests)
 
+		if req.Stream {
+			t.Errorf("turn %d: request.Stream = true, want false (cache sessions are non-streamed)", turn)
+		}
 		// System block carries the breakpoint.
 		if len(req.System) != 1 || req.System[0].CacheControl == nil || req.System[0].CacheControl.Type != "ephemeral" {
 			t.Errorf("turn %d: system block missing cache_control", turn)

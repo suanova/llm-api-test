@@ -21,6 +21,9 @@ func TestCacheSession(t *testing.T) {
 		requests = append(requests, &req)
 		turn := len(requests)
 
+		if req.Stream {
+			t.Errorf("turn %d: request.Stream = true, want false (cache sessions are non-streamed)", turn)
+		}
 		// System message first, carrying the stable prompt.
 		if len(req.Messages) < 2 || req.Messages[0].Role != "system" {
 			t.Errorf("turn %d: messages[0] = %+v, want system message first", turn, req.Messages[0])

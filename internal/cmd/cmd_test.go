@@ -581,7 +581,7 @@ func TestCacheOutJSON(t *testing.T) {
 
 func TestCacheFlagValidation(t *testing.T) {
 	cfg := writeConfig(t, t.TempDir(), "http://mock.invalid")
-	for _, turns := range []string{"0", "99"} {
+	for _, turns := range []string{"0", "1", "99"} {
 		code, out := runRoot(t, "--config", cfg, "cache", "--turns", turns)
 		if code != 2 {
 			t.Errorf("--turns %s: exit code = %d, want 2", turns, code)
@@ -593,5 +593,9 @@ func TestCacheFlagValidation(t *testing.T) {
 	code, out := runRoot(t, "--config", cfg, "--no-stream", "cache")
 	if code != 2 || !strings.Contains(out, "--no-stream does not apply") {
 		t.Errorf("--no-stream cache: code = %d, want 2 with explanation\noutput:\n%s", code, out)
+	}
+	code, out = runRoot(t, "--config", cfg, "cache", "--api-format", "responses")
+	if code != 2 || !strings.Contains(out, "has no cache test") {
+		t.Errorf("--api-format responses cache: code = %d, want 2 with 'has no cache test'\noutput:\n%s", code, out)
 	}
 }

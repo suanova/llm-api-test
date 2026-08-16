@@ -25,7 +25,7 @@ func newCacheCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&apiFormat, "api-format", "all", "API format to test: all, chat, messages")
-	cmd.Flags().IntVar(&cacheTurns, "turns", 8, "session turns (1-8)")
+	cmd.Flags().IntVar(&cacheTurns, "turns", 8, fmt.Sprintf("session turns (2-%d)", len(cases.CacheQuestions)))
 	return cmd
 }
 
@@ -37,8 +37,8 @@ func runCache(cmd *cobra.Command) int {
 		fmt.Fprintln(errOut, "--no-stream does not apply to cache: sessions are always non-streamed")
 		return 2
 	}
-	if cacheTurns < 1 || cacheTurns > len(cases.CacheQuestions) {
-		fmt.Fprintf(errOut, "turns must be between 1 and %d\n", len(cases.CacheQuestions))
+	if cacheTurns < 2 || cacheTurns > len(cases.CacheQuestions) {
+		fmt.Fprintf(errOut, "turns must be between 2 and %d\n", len(cases.CacheQuestions))
 		return 2
 	}
 
@@ -60,7 +60,11 @@ func runCache(cmd *cobra.Command) int {
 	code := 0
 	for _, f := range formats {
 		if f.Cache == nil {
-			continue // format has no cache test (responses)
+			if apiFormat != "all" {
+				fmt.Fprintf(errOut, "api format %q has no cache test (v1: chat, messages)\n", f.Name)
+				return 2
+			}
+			continue // format has no cache test (responses); skip in "all" runs
 		}
 		cc := f.Cache(p)
 		for mi, m := range cfg.Models {

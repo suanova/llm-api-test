@@ -52,6 +52,9 @@ func TestRunCacheAggregation(t *testing.T) {
 	if r.WarmTurns != 2 {
 		t.Errorf("warm turns = %d, want 2", r.WarmTurns)
 	}
+	if r.WarmHits != 2 {
+		t.Errorf("warm hits = %d, want 2", r.WarmHits)
+	}
 	if r.Verdict != "cache observed" {
 		t.Errorf("verdict = %q, want cache observed", r.Verdict)
 	}

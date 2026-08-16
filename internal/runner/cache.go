@@ -20,6 +20,7 @@ type CacheReport struct {
 	CachedTokens    int64
 	PromptTokens    int64
 	WarmTurns       int
+	WarmHits        int // warm turns where the request observed a cache hit
 	ColdTotal       time.Duration
 	WarmTotalP50    time.Duration
 	FailedTurns     int
@@ -32,7 +33,6 @@ func RunCache(ctx context.Context, cc registry.CacheCase, model string, turns in
 	r := CacheReport{CaseID: cc.ID(), Turns: obs}
 	var warmTotals []time.Duration
 	var allCached, allPrompt, warmCached, warmPrompt int64
-	warmHits := 0
 	for _, t := range obs {
 		if t.Err != nil {
 			r.FailedTurns++
@@ -49,7 +49,7 @@ func RunCache(ctx context.Context, cc registry.CacheCase, model string, turns in
 		warmTotals = append(warmTotals, t.Total)
 		r.WarmTurns++
 		if t.Cached > 0 {
-			warmHits++
+			r.WarmHits++
 		}
 	}
 	r.CachedTokens = allCached
@@ -61,10 +61,10 @@ func RunCache(ctx context.Context, cc registry.CacheCase, model string, turns in
 		r.WarmHitRate = float64(warmCached) / float64(warmPrompt)
 	}
 	if r.WarmTurns > 0 {
-		r.RequestLevelHit = float64(warmHits) / float64(r.WarmTurns)
+		r.RequestLevelHit = float64(r.WarmHits) / float64(r.WarmTurns)
 		r.WarmTotalP50 = durationSummary(warmTotals).P50
 	}
-	r.Verdict = cacheVerdict(r, warmHits)
+	r.Verdict = cacheVerdict(r, r.WarmHits)
 	return r
 }
 
@@ -99,10 +99,12 @@ func FormatCacheReport(r CacheReport) string {
 	}
 	fmt.Fprintf(&b, "    Session hit rate: %.1f%% (cached %d / prompt %d)\n",
 		100*r.SessionHitRate, r.CachedTokens, r.PromptTokens)
-	fmt.Fprintf(&b, "    Warm turns: %.1f%% token-weighted, %.0f/%d request-level\n",
-		100*r.WarmHitRate, r.RequestLevelHit*float64(r.WarmTurns), r.WarmTurns)
-	fmt.Fprintf(&b, "    Cold %s vs warm p50 %s\n",
-		r.ColdTotal.Round(time.Millisecond), r.WarmTotalP50.Round(time.Millisecond))
+	fmt.Fprintf(&b, "    Warm turns: %.1f%% token-weighted, %d/%d request-level\n",
+		100*r.WarmHitRate, r.WarmHits, r.WarmTurns)
+	if r.ColdTotal > 0 {
+		fmt.Fprintf(&b, "    Cold %s vs warm p50 %s\n",
+			r.ColdTotal.Round(time.Millisecond), r.WarmTotalP50.Round(time.Millisecond))
+	}
 	fmt.Fprintf(&b, "    Verdict: %s\n", r.Verdict)
 	fmt.Fprintf(&b, "    Failed: %d/%d\n", r.FailedTurns, len(r.Turns))
 	return b.String()
