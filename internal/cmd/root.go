@@ -1,5 +1,5 @@
 // Package cmd wires the CLI: the root command with common flags and the
-// compatibility, benchmark, and list subcommands.
+// compatibility, latency, throughput, and list subcommands.
 package cmd
 
 import (
@@ -39,7 +39,7 @@ func NewRoot() *cobra.Command {
 	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "print raw response body on each case")
 	root.PersistentFlags().StringVarP(&outPath, "out", "o", "", "write the JSON report to this file; text report still goes to stdout")
 
-	root.AddCommand(newCompatibilityCmd(), newBenchmarkCmd(), newListCmd())
+	root.AddCommand(newCompatibilityCmd(), newLatencyCmd(), newThroughputCmd(), newListCmd())
 	return root
 }
 
