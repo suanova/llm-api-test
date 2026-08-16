@@ -47,10 +47,10 @@ type ToolFunction struct {
 
 // Request is the Chat Completions request body.
 type Request struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Stream         bool            `json:"stream,omitempty"`
-	Tools          []Tool          `json:"tools,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Stream              bool            `json:"stream,omitempty"`
+	Tools               []Tool          `json:"tools,omitempty"`
 	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
 	Seed                *int            `json:"seed,omitempty"`
 	Temperature         *float64        `json:"temperature,omitempty"`
@@ -61,6 +61,14 @@ type Request struct {
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// PromptTokensDetails is the OpenAI-standard automatic-cache field.
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details,omitempty"`
+	// PromptCacheHitTokens/MissTokens is the DeepSeek-style cache pair;
+	// DeepSeek reports these instead of prompt_tokens_details.
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
 }
 
 // Response is the non-streaming Chat Completions response body.

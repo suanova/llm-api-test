@@ -154,6 +154,70 @@ func (r BenchmarkReport) JSON(model, baseURL, apiFormat string) BenchmarkJSONRep
 	return j
 }
 
+// CacheJSONTurn is one session turn in JSON form.
+type CacheJSONTurn struct {
+	Turn         int    `json:"turn"`
+	PromptTokens int    `json:"prompt_tokens"`
+	Cached       int    `json:"cached"`
+	CacheWrite   int    `json:"cache_write"`
+	Miss         int    `json:"miss"`
+	TotalMS      int64  `json:"total_ms"`
+	Error        string `json:"error,omitempty"`
+}
+
+// CacheJSONReport is one cache session.
+type CacheJSONReport struct {
+	Model           string          `json:"model"`
+	BaseURL         string          `json:"base_url"`
+	APIFormat       string          `json:"api_format"`
+	CaseID          string          `json:"case_id"`
+	Turns           []CacheJSONTurn `json:"turns"`
+	SessionHitRate  float64         `json:"session_token_hit_rate"`
+	WarmHitRate     float64         `json:"warm_token_hit_rate"`
+	RequestLevelHit float64         `json:"warm_request_hit_rate"`
+	CachedTokens    int64           `json:"cached_tokens_total"`
+	PromptTokens    int64           `json:"prompt_tokens_total"`
+	ColdTotalMS     int64           `json:"cold_total_ms"`
+	WarmTotalP50MS  int64           `json:"warm_total_p50_ms"`
+	FailedTurns     int             `json:"failed_turns"`
+	Verdict         string          `json:"verdict"`
+}
+
+// CacheJSON converts a cache report into machine-readable form.
+func (r CacheReport) CacheJSON(model, baseURL, apiFormat string) CacheJSONReport {
+	j := CacheJSONReport{
+		Model:           model,
+		BaseURL:         baseURL,
+		APIFormat:       apiFormat,
+		CaseID:          r.CaseID,
+		SessionHitRate:  r.SessionHitRate,
+		WarmHitRate:     r.WarmHitRate,
+		RequestLevelHit: r.RequestLevelHit,
+		CachedTokens:    r.CachedTokens,
+		PromptTokens:    r.PromptTokens,
+		ColdTotalMS:     r.ColdTotal.Milliseconds(),
+		WarmTotalP50MS:  r.WarmTotalP50.Milliseconds(),
+		FailedTurns:     r.FailedTurns,
+		Verdict:         r.Verdict,
+		Turns:           make([]CacheJSONTurn, 0, len(r.Turns)),
+	}
+	for _, t := range r.Turns {
+		jt := CacheJSONTurn{
+			Turn:         t.Turn,
+			PromptTokens: t.PromptTokens,
+			Cached:       t.Cached,
+			CacheWrite:   t.CacheWrite,
+			Miss:         t.PromptTokens - t.Cached - t.CacheWrite,
+			TotalMS:      t.Total.Milliseconds(),
+		}
+		if t.Err != nil {
+			jt.Error = t.Err.Error()
+		}
+		j.Turns = append(j.Turns, jt)
+	}
+	return j
+}
+
 // WriteJSON writes v as indented JSON to path.
 func WriteJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")

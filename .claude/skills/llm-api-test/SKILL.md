@@ -80,6 +80,29 @@ the JSON report (text still goes to stdout).
   usually just a long generation: check the stderr progress line before
   concluding anything.
 
+### Cache hit rate
+
+```bash
+./llm-api-test cache -c <config> --api-format chat|messages|all --turns 8
+```
+
+- Session-shaped: a stable prefix (system prompt + tool definitions) with a
+  history growing one turn at a time — mirrors how Claude Code (explicit
+  `cache_control` breakpoints) and Codex (automatic prefix cache) actually
+  use caching. Repeated identical requests would not represent real agent
+  traffic.
+- Always non-streamed. Reports per-turn cached/written tokens, session and
+  warm-turn hit rates, and a verdict (`cache observed` / `no cache
+  observed` / `inconclusive`). `no cache observed` is a valid result — it is
+  exactly what a proxy that strips `cache_control` looks like.
+- `chat` needs no cache parameters (automatic cache); `messages` uses three
+  `cache_control: ephemeral` breakpoints (system, last tool, last history
+  message). v1 excludes `responses`.
+- A live progress line goes to **stderr** (`[cache] elapsed 5s, 3/8 turns
+  completed`); the report prints to stdout. Same for `compatibility`
+  (`[compat] ... cases completed`) — a silent stderr means the run is
+  genuinely stuck, not just slow.
+
 ### Reading results
 
 - `PASS/FAIL` lines: read the detail text — `FAIL` on a 2xx/3xx response is

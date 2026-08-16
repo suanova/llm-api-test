@@ -79,8 +79,16 @@ func apiMockHandler(t *testing.T) http.HandlerFunc {
 		json   string
 	}
 
+	chatCacheTurns := 0
 	chatPayload := func(req *chat.Request) payload {
 		switch {
+		case len(req.Tools) > 0 && len(req.Messages) > 0 && req.Messages[0].Role == "system":
+			// cache session: system message + tools + growing history
+			chatCacheTurns++
+			if chatCacheTurns == 1 {
+				return payload{json: `{"choices":[{"message":{"content":"answer"}}],"usage":{"prompt_tokens":5000,"completion_tokens":20}}`}
+			}
+			return payload{json: `{"choices":[{"message":{"content":"answer"}}],"usage":{"prompt_tokens":5030,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":4970}}}`}
 		case len(req.Tools) > 0:
 			return payload{
 				events: []string{
@@ -163,8 +171,16 @@ func apiMockHandler(t *testing.T) http.HandlerFunc {
 			}
 		}
 	}
+	msgCacheTurns := 0
 	messagesPayload := func(req *messages.Request) payload {
 		switch {
+		case len(req.System) > 0 && len(req.Tools) > 0:
+			// cache session: system block + tools + growing history
+			msgCacheTurns++
+			if msgCacheTurns == 1 {
+				return payload{json: `{"content":[{"type":"text","text":"answer"}],"usage":{"input_tokens":5000,"output_tokens":20,"cache_creation_input_tokens":5000}}`}
+			}
+			return payload{json: `{"content":[{"type":"text","text":"answer"}],"usage":{"input_tokens":5030,"output_tokens":20,"cache_read_input_tokens":4970}}`}
 		case len(req.Tools) > 0:
 			return payload{
 				events: []string{
@@ -447,7 +463,9 @@ func TestLatencyOutJSON(t *testing.T) {
 	if !r.Stream || r.TTFB == nil || r.TTFT == nil {
 		t.Errorf("streamed report must include ttfb/ttft: %+v", r)
 	}
-	if r.Mode != "latency" || r.ElapsedMS <= 0 || r.Failed != 0 {
+	// ElapsedMS is not asserted: against the in-process mock the whole run
+	// can complete in under a millisecond, so .Milliseconds() truncates to 0.
+	if r.Mode != "latency" || r.Failed != 0 {
 		t.Errorf("report fields wrong: %+v", r)
 	}
 	// Latency mode: no throughput-only indicators.
@@ -501,5 +519,85 @@ func TestThroughputOutJSON(t *testing.T) {
 	}
 	if !r.Stream || r.TTFB == nil || r.TTFT == nil {
 		t.Errorf("streamed report must include ttfb/ttft: %+v", r)
+	}
+}
+
+func TestCacheRun(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	code, out := runRoot(t, "--config", cfg, "cache", "--turns", "3")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	for _, id := range []string{"chat:cache", "messages:cache"} {
+		if !strings.Contains(out, id) {
+			t.Errorf("output missing %q\noutput:\n%s", id, out)
+		}
+	}
+	if got := strings.Count(out, "Verdict: cache observed"); got != 2 {
+		t.Errorf("got %d 'cache observed' verdicts, want 2\noutput:\n%s", got, out)
+	}
+	if !strings.Contains(out, "Failed: 0/3") {
+		t.Errorf("output missing success line\noutput:\n%s", out)
+	}
+}
+
+func TestCacheOutJSON(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+	outPath := filepath.Join(t.TempDir(), "cache.json")
+
+	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "cache", "--turns", "3")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reports []runner.CacheJSONReport
+	if err := json.Unmarshal(data, &reports); err != nil {
+		t.Fatalf("parse report: %v\n%s", err, data)
+	}
+	if len(reports) != 2 {
+		t.Fatalf("got %d reports, want 2 (chat + messages)", len(reports))
+	}
+	for _, r := range reports {
+		if r.Verdict != "cache observed" || r.SessionHitRate <= 0 {
+			t.Errorf("report %+v: want observed verdict with positive hit rate", r)
+		}
+		if len(r.Turns) != 3 {
+			t.Errorf("report %s: %d turns, want 3", r.APIFormat, len(r.Turns))
+		}
+		if r.Turns[0].Cached != 0 || r.Turns[1].Cached <= 0 {
+			t.Errorf("report %s: cold/warm turn misparsed: %+v", r.APIFormat, r.Turns)
+		}
+		if r.Model != "m1" || r.BaseURL == "" {
+			t.Errorf("report metadata missing: %+v", r)
+		}
+	}
+}
+
+func TestCacheFlagValidation(t *testing.T) {
+	cfg := writeConfig(t, t.TempDir(), "http://mock.invalid")
+	for _, turns := range []string{"0", "1", "99"} {
+		code, out := runRoot(t, "--config", cfg, "cache", "--turns", turns)
+		if code != 2 {
+			t.Errorf("--turns %s: exit code = %d, want 2", turns, code)
+		}
+		if !strings.Contains(out, "turns must be between") {
+			t.Errorf("--turns %s: output missing validation message\noutput:\n%s", turns, out)
+		}
+	}
+	code, out := runRoot(t, "--config", cfg, "--no-stream", "cache")
+	if code != 2 || !strings.Contains(out, "--no-stream does not apply") {
+		t.Errorf("--no-stream cache: code = %d, want 2 with explanation\noutput:\n%s", code, out)
+	}
+	code, out = runRoot(t, "--config", cfg, "cache", "--api-format", "responses")
+	if code != 2 || !strings.Contains(out, "has no cache test") {
+		t.Errorf("--api-format responses cache: code = %d, want 2 with 'has no cache test'\noutput:\n%s", code, out)
 	}
 }

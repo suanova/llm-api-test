@@ -83,7 +83,7 @@ func runCompatibility(cmd *cobra.Command, tests []string) int {
 			fmt.Fprintf(out, "base_url: %s  model: %s\n", cfg.BaseURL, m)
 			fmt.Fprintf(out, "%s Compatibility\n\n", f.Desc)
 
-			results := runner.RunCompat(ctx, cases, m)
+			results := runner.RunCompat(ctx, cases, m, errOut)
 			jsonReports = append(jsonReports, runner.BuildCompatJSON(m, cfg.BaseURL, f.Name, p.Stream, results))
 			for _, r := range results {
 				fmt.Fprintf(out, "  %-30s %s  %s\n", r.Case.ID(), status(r.Result), r.Result.Detail)
