@@ -463,7 +463,9 @@ func TestLatencyOutJSON(t *testing.T) {
 	if !r.Stream || r.TTFB == nil || r.TTFT == nil {
 		t.Errorf("streamed report must include ttfb/ttft: %+v", r)
 	}
-	if r.Mode != "latency" || r.ElapsedMS <= 0 || r.Failed != 0 {
+	// ElapsedMS is not asserted: against the in-process mock the whole run
+	// can complete in under a millisecond, so .Milliseconds() truncates to 0.
+	if r.Mode != "latency" || r.Failed != 0 {
 		t.Errorf("report fields wrong: %+v", r)
 	}
 	// Latency mode: no throughput-only indicators.
