@@ -541,10 +541,10 @@ from turn 2.
   messages:cache  (8 turns, non-streamed)
     Turn  prompt  cached  written  miss  read%   total
       1    5234       0    5234    0   0.0%   1.24s
-      2    5311    5011       0   300  94.4%   340ms
+      2    5311    5234      77    0  98.6%   340ms
       ...
-    Session hit rate: 85.2% (cached 28013 / prompt 32876)
-    Warm turns: 95.1% token-weighted, 7/7 request-level
+    Session hit rate: 86.9% (cached 38255 / prompt 44028)
+    Warm turns: 98.6% token-weighted, 7/7 request-level
     Cold 1.24s vs warm p50 310ms
     Verdict: cache observed
     Failed: 0/8
