@@ -16,7 +16,7 @@ type stubCacheCase struct {
 
 func (s *stubCacheCase) ID() string   { return "stub:cache" }
 func (s *stubCacheCase) Desc() string { return "stub" }
-func (s *stubCacheCase) RunSession(context.Context, string, int) []registry.CacheTurn {
+func (s *stubCacheCase) RunSession(context.Context, string, int, func(int)) []registry.CacheTurn {
 	return s.turns
 }
 
@@ -30,7 +30,7 @@ func TestRunCacheAggregation(t *testing.T) {
 		turn(2, 5030, 4970, 0, 340*time.Millisecond),
 		turn(3, 5060, 5000, 0, 320*time.Millisecond),
 	}}
-	r := RunCache(context.Background(), cc, "m", 3)
+	r := RunCache(context.Background(), cc, "m", 3, nil)
 	if r.FailedTurns != 0 {
 		t.Errorf("failed = %d, want 0", r.FailedTurns)
 	}
@@ -65,7 +65,7 @@ func TestRunCacheNoCacheObserved(t *testing.T) {
 		turn(1, 5000, 0, 0, time.Second),
 		turn(2, 5030, 0, 0, 900*time.Millisecond),
 	}}
-	r := RunCache(context.Background(), cc, "m", 2)
+	r := RunCache(context.Background(), cc, "m", 2, nil)
 	if r.Verdict != "no cache observed" {
 		t.Errorf("verdict = %q, want no cache observed", r.Verdict)
 	}
@@ -78,7 +78,7 @@ func TestRunCacheInconclusiveOnFirstTurnFailure(t *testing.T) {
 	cc := &stubCacheCase{turns: []registry.CacheTurn{
 		{Turn: 1, Err: errors.New("boom")},
 	}}
-	r := RunCache(context.Background(), cc, "m", 3)
+	r := RunCache(context.Background(), cc, "m", 3, nil)
 	if r.Verdict != "inconclusive" {
 		t.Errorf("verdict = %q, want inconclusive", r.Verdict)
 	}
@@ -93,7 +93,7 @@ func TestRunCacheObservedDespiteLateFailure(t *testing.T) {
 		turn(2, 5030, 4970, 0, 340*time.Millisecond),
 		{Turn: 3, Err: errors.New("boom")},
 	}}
-	r := RunCache(context.Background(), cc, "m", 3)
+	r := RunCache(context.Background(), cc, "m", 3, nil)
 	if r.Verdict != "cache observed" {
 		t.Errorf("verdict = %q, want cache observed", r.Verdict)
 	}
@@ -108,7 +108,7 @@ func TestFormatCacheReport(t *testing.T) {
 		turn(2, 5030, 4970, 0, 340*time.Millisecond),
 		turn(3, 5060, 5000, 0, 320*time.Millisecond),
 	}}
-	r := RunCache(context.Background(), cc, "m", 3)
+	r := RunCache(context.Background(), cc, "m", 3, nil)
 	out := FormatCacheReport(r)
 	for _, want := range []string{
 		"stub:cache", "3 turns", "Turn", "read%",
@@ -127,7 +127,7 @@ func TestCacheJSON(t *testing.T) {
 		turn(2, 5030, 4970, 0, 340*time.Millisecond),
 		{Turn: 3, Err: errors.New("boom")},
 	}}
-	r := RunCache(context.Background(), cc, "m", 3)
+	r := RunCache(context.Background(), cc, "m", 3, nil)
 	j := r.CacheJSON("m", "http://x", "chat")
 	if j.APIFormat != "chat" || j.Model != "m" || j.Verdict != "cache observed" {
 		t.Errorf("metadata wrong: %+v", j)

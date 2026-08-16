@@ -74,7 +74,7 @@ func runCache(cmd *cobra.Command) int {
 			fmt.Fprintf(out, "base_url: %s  model: %s\n", cfg.BaseURL, m)
 			fmt.Fprintf(out, "turns=%d\n\n", cacheTurns)
 
-			rep := runner.RunCache(ctx, cc, m, cacheTurns)
+			rep := runner.RunCache(ctx, cc, m, cacheTurns, errOut)
 			jsonReports = append(jsonReports, rep.CacheJSON(m, cfg.BaseURL, f.Name))
 			fmt.Fprintln(out, runner.FormatCacheReport(rep))
 			if rep.FailedTurns > 0 {

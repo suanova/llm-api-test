@@ -54,7 +54,7 @@ func TestRunCompatGating(t *testing.T) {
 		&fakeCase{id: "f:basic", name: "basic", res: &registry.CompatResult{Pass: false, Detail: "boom"}, run: &run},
 		&fakeCase{id: "f:seed", name: "seed", res: &registry.CompatResult{Pass: true}, run: &run},
 	}
-	results := RunCompat(context.Background(), cases, "m")
+	results := RunCompat(context.Background(), cases, "m", nil)
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
@@ -75,7 +75,7 @@ func TestRunCompatAllPass(t *testing.T) {
 		&fakeCase{id: "f:basic", name: "basic", res: &registry.CompatResult{Pass: true}, run: &run},
 		&fakeCase{id: "f:seed", name: "seed", res: &registry.CompatResult{Pass: true}, run: &run},
 	}
-	results := RunCompat(context.Background(), cases, "m")
+	results := RunCompat(context.Background(), cases, "m", nil)
 	if run != 2 {
 		t.Errorf("cases executed %d times, want 2", run)
 	}

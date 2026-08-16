@@ -3,7 +3,9 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"llm-api-test/internal/registry"
@@ -28,8 +30,31 @@ type CacheReport struct {
 }
 
 // RunCache runs one cache session and aggregates the per-turn observations.
-func RunCache(ctx context.Context, cc registry.CacheCase, model string, turns int) CacheReport {
-	obs := cc.RunSession(ctx, model, turns)
+// When progress is non-nil, a live status line (see cacheProgressLine) is
+// written to it and cleared when done.
+func RunCache(ctx context.Context, cc registry.CacheCase, model string, turns int, progress io.Writer) CacheReport {
+	var done atomic.Int32
+	start := time.Now()
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	if progress != nil {
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-doneCh:
+					return
+				case now := <-t.C:
+					fmt.Fprintf(progress, "\r%s", cacheProgressLine(now.Sub(start), int(done.Load()), turns))
+				}
+			}
+		}()
+	}
+	obs := cc.RunSession(ctx, model, turns, func(n int) { done.Store(int32(n)) })
+	if progress != nil {
+		fmt.Fprint(progress, "\r\033[K") // clear the live status line
+	}
 	r := CacheReport{CaseID: cc.ID(), Turns: obs}
 	var warmTotals []time.Duration
 	var allCached, allPrompt, warmCached, warmPrompt int64
@@ -66,6 +91,12 @@ func RunCache(ctx context.Context, cc registry.CacheCase, model string, turns in
 	}
 	r.Verdict = cacheVerdict(r, r.WarmHits)
 	return r
+}
+
+// cacheProgressLine is the live status line printed while a cache session runs.
+func cacheProgressLine(elapsed time.Duration, done, total int) string {
+	return fmt.Sprintf("[cache] elapsed %s, %d/%d turns completed",
+		elapsed.Round(time.Second), done, total)
 }
 
 // cacheVerdict classifies the session outcome (design.md "Verdicts").

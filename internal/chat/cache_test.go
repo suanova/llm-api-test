@@ -50,7 +50,7 @@ func TestCacheSession(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "test-key", nil, false)
-	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 3)
+	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 3, nil)
 	if len(turns) != 3 {
 		t.Fatalf("got %d turns, want 3", len(turns))
 	}
@@ -86,7 +86,7 @@ func TestCacheSessionDeepSeekUsage(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "test-key", nil, false)
-	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 2)
+	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 2, nil)
 	if turns[0].Cached != 0 {
 		t.Errorf("turn 1 cached = %d, want 0", turns[0].Cached)
 	}
@@ -110,7 +110,7 @@ func TestCacheSessionAbortsOnError(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "test-key", nil, false)
-	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 4)
+	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 4, nil)
 	if len(turns) != 2 {
 		t.Fatalf("got %d turns, want 2 (aborted at turn 2)", len(turns))
 	}

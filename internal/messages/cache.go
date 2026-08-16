@@ -21,7 +21,7 @@ func (c *CacheCase) Desc() string {
 	return "POST /v1/messages prompt-cache hit rate over a simulated session"
 }
 
-func (c *CacheCase) RunSession(ctx context.Context, model string, turns int) []registry.CacheTurn {
+func (c *CacheCase) RunSession(ctx context.Context, model string, turns int, progress func(done int)) []registry.CacheTurn {
 	history := make([]Message, 0, 2*turns+1)
 	result := make([]registry.CacheTurn, 0, turns)
 	for i := 0; i < turns && i < len(cases.CacheQuestions); i++ {
@@ -41,6 +41,9 @@ func (c *CacheCase) RunSession(ctx context.Context, model string, turns int) []r
 		}
 		start := time.Now()
 		res, err := c.client.Send(ctx, req)
+		if progress != nil {
+			progress(i + 1)
+		}
 		turn := registry.CacheTurn{Turn: i + 1}
 		if err != nil {
 			turn.Err = err

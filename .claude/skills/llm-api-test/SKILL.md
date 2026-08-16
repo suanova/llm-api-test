@@ -98,6 +98,10 @@ the JSON report (text still goes to stdout).
 - `chat` needs no cache parameters (automatic cache); `messages` uses three
   `cache_control: ephemeral` breakpoints (system, last tool, last history
   message). v1 excludes `responses`.
+- A live progress line goes to **stderr** (`[cache] elapsed 5s, 3/8 turns
+  completed`); the report prints to stdout. Same for `compatibility`
+  (`[compat] ... cases completed`) — a silent stderr means the run is
+  genuinely stuck, not just slow.
 
 ### Reading results
 

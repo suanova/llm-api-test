@@ -81,7 +81,7 @@ func TestCacheSession(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "test-key", nil, false)
-	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 3)
+	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 3, nil)
 	if len(turns) != 3 {
 		t.Fatalf("got %d turns, want 3", len(turns))
 	}
@@ -116,7 +116,7 @@ func TestCacheSessionAbortsOnError(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "test-key", nil, false)
-	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 5)
+	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 5, nil)
 	if len(turns) != 3 {
 		t.Fatalf("got %d turns, want 3 (aborted at turn 3)", len(turns))
 	}
