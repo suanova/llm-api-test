@@ -120,25 +120,26 @@ Common flags (all subcommands):
 ./llm-api-test list --api-format chat
 ```
 
-### Benchmark
+### Benchmarks
 
-Benchmark mode runs `iterations` waves of `concurrency` parallel streamed
-requests and reports percentiles (p50/p95/p99/min/max).
+The `latency` and `throughput` commands run `iterations` waves of
+`concurrency` parallel streamed requests and report percentiles
+(p50/p95/p99/min/max).
 
 ```bash
 # latency benchmark (prompt: "Reply with exactly the word: pong")
-./llm-api-test benchmark --mode latency
+./llm-api-test latency
 
 # throughput benchmark (long, thorough prompt)
-./llm-api-test benchmark --mode throughput
+./llm-api-test throughput
 
 # only Chat Completions; custom iterations/concurrency
-./llm-api-test benchmark --mode throughput --api-format chat --iterations 10 --concurrency 5
+./llm-api-test throughput --api-format chat --iterations 10 --concurrency 5
 ```
 
-Latency mode reports TTFB/TTFT/Total; throughput mode additionally reports
+`latency` reports TTFB/TTFT/Total; `throughput` additionally reports
 TPOT, TPS, and token counts. With `--no-stream`, TTFB/TTFT/TPOT are omitted
-(they require streaming) and throughput falls back to tokens/s from usage.
+(they require streaming) and `throughput` falls back to tokens/s from usage.
 Benchmark requests cap generation at 4096 tokens (`max_completion_tokens` for
 chat, `max_output_tokens` for responses, `max_tokens` for messages) so a
 thorough prompt cannot run unbounded; the benchmark context timeout (120s per
@@ -214,7 +215,7 @@ model/format run); see `docs/design.md` for the schema.
 
 ```
 cmd/llm-api-test/main.go     # entrypoint
-internal/cmd/                # cobra CLI: compatibility / benchmark / list
+internal/cmd/                # cobra CLI: compatibility / latency / throughput / list
 internal/chat/               # Chat Completions format: client, cases, benchmark
 internal/responses/          # Responses format: client, cases, benchmark
 internal/messages/           # Anthropic Messages format: client, cases, benchmark
@@ -245,8 +246,8 @@ config.example.yaml          # sample config
 1. Implement `registry.BenchmarkCase` (`ID`, `Desc`, `Run(ctx, model, prompt)`)
    in the format package.
 2. Wire it into `Format().Benchmark` in the package's `cases.go`.
-3. `benchmark` runs one case per format; add your format to the composition
-   root (`formats` in `internal/cmd/compatibility.go`) if it is new.
+3. `latency`/`throughput` run one case per format; add your format to the
+   composition root (`formats` in `internal/cmd/compatibility.go`) if it is new.
 
 ## Adding an API surface
 

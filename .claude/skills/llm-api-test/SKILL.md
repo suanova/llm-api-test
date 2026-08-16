@@ -17,12 +17,12 @@ is fine) rather than guessing — especially mode, providers, and benchmark load
 
 ## Decision flow (clarify what's unstated)
 
-1. **Mode**: compatibility, benchmark, or both?
+1. **Mode**: compatibility, latency/throughput benchmark, or both?
    - compatibility: default `--api-format all`. A provider's compatibility
      result is the whole point — run all formats unless told otherwise.
    - benchmark: default `--api-format chat`. **Throughput is opt-in and
-     expensive** — never run `--mode throughput` unless the user asked for
-     it. Latency is cheap; offer it freely.
+     expensive** — never run the `throughput` command unless the user asked
+     for it. `latency` is cheap; offer it freely.
 2. **Providers**: discover `config.*.yaml` files in the repo root, show the
    user the list, and ask which to test. The user may also name configs
    directly. Config files hold real API keys — never print their contents.
@@ -61,11 +61,11 @@ the JSON report (text still goes to stdout).
 ### Benchmark
 
 ```bash
-./llm-api-test benchmark --mode latency -c <config> --api-format chat --iterations 10 --concurrency 5
-./llm-api-test benchmark --mode throughput -c <config> --api-format chat --iterations 3 --concurrency 3
+./llm-api-test latency -c <config> --api-format chat --iterations 10 --concurrency 5
+./llm-api-test throughput -c <config> --api-format chat --iterations 3 --concurrency 3
 ```
 
-- The prompt is fixed per mode (latency: pong; throughput: a fixed
+- The prompt is fixed per command (`latency`: pong; `throughput`: a fixed
   "write a ~3000-word article" prompt, ~4-6k output tokens) — there is no
   `--prompt` flag.
 - Always pass `-o <path>.json` so you can build comparison tables and the

@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,27 +15,47 @@ import (
 var (
 	benchConcurrency int
 	benchIterations  int
-	benchMode        string
 )
 
-func newBenchmarkCmd() *cobra.Command {
+// newLatencyCmd builds the latency benchmark command (short pong prompt).
+func newLatencyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "benchmark",
-		Short: "Run latency/throughput benchmarks",
+		Use:   "latency",
+		Short: "Run latency benchmarks (short pong prompt)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runBenchmark(cmd)
+			exitCode = runBenchmark(cmd, "latency")
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&apiFormat, "api-format", "all", "API format to test: all, chat, responses, messages")
-	cmd.Flags().IntVar(&benchConcurrency, "concurrency", 5, "concurrent requests per iteration")
-	cmd.Flags().IntVar(&benchIterations, "iterations", 10, "iterations per benchmark case")
-	cmd.Flags().StringVar(&benchMode, "mode", "latency", "latency (pong prompt) or throughput (long prompt)")
+	addBenchmarkFlags(cmd, 5, 10)
 	return cmd
 }
 
-// runBenchmark runs the benchmarks and returns the exit code.
-func runBenchmark(cmd *cobra.Command) int {
+// newThroughputCmd builds the throughput benchmark command (long prompt).
+func newThroughputCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "throughput",
+		Short: "Run throughput benchmarks (long prompt)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			exitCode = runBenchmark(cmd, "throughput")
+			return nil
+		},
+	}
+	addBenchmarkFlags(cmd, 3, 3)
+	return cmd
+}
+
+// addBenchmarkFlags registers the flags shared by the benchmark commands.
+// Throughput defaults to 3x3 because each request is expensive (long prompt);
+// latency defaults to 5x10.
+func addBenchmarkFlags(cmd *cobra.Command, concurrency, iterations int) {
+	cmd.Flags().StringVar(&apiFormat, "api-format", "all", "API format to test: all, chat, responses, messages")
+	cmd.Flags().IntVar(&benchConcurrency, "concurrency", concurrency, "concurrent requests per iteration")
+	cmd.Flags().IntVar(&benchIterations, "iterations", iterations, "iterations per benchmark case")
+}
+
+// runBenchmark runs the benchmark for the given mode and returns the exit code.
+func runBenchmark(cmd *cobra.Command, mode string) int {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 	cfg, err := loadConfig()
@@ -48,9 +67,9 @@ func runBenchmark(cmd *cobra.Command) int {
 	if !ok {
 		return 2
 	}
-	prompt, ok := benchmarkPrompt(errOut)
-	if !ok {
-		return 2
+	prompt := cases.PongPrompt
+	if mode == "throughput" {
+		prompt = cases.LongPrompt
 	}
 
 	p := registry.Params{Config: cfg, Stream: !noStream, Debug: debugWriter()}
@@ -71,7 +90,7 @@ func runBenchmark(cmd *cobra.Command) int {
 
 			rep := runner.RunBenchmark(ctx, bc, m, prompt, benchIterations, benchConcurrency, errOut)
 			rep.Stream = p.Stream
-			rep.Mode = benchMode
+			rep.Mode = mode
 			jsonReports = append(jsonReports, rep.JSON(m, cfg.BaseURL, f.Name))
 			fmt.Fprintln(out, runner.FormatBenchmarkReport(rep))
 			if rep.Failed > 0 {
@@ -86,19 +105,6 @@ func runBenchmark(cmd *cobra.Command) int {
 		}
 	}
 	return code
-}
-
-// benchmarkPrompt maps --mode to the benchmark prompt text.
-func benchmarkPrompt(errOut io.Writer) (string, bool) {
-	switch benchMode {
-	case "latency":
-		return cases.PongPrompt, true
-	case "throughput":
-		return cases.LongPrompt, true
-	default:
-		fmt.Fprintf(errOut, "unknown --mode %q (available: latency, throughput)\n", benchMode)
-		return "", false
-	}
 }
 
 // benchmarkTimeout gives each request up to 120s, plus a floor of 10 minutes.

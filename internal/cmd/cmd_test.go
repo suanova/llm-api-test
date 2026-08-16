@@ -322,12 +322,12 @@ func TestList(t *testing.T) {
 	}
 }
 
-func TestBenchmarkRun(t *testing.T) {
+func TestLatencyRun(t *testing.T) {
 	server := httptest.NewServer(apiMockHandler(t))
 	defer server.Close()
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 
-	code, out := runRoot(t, "--config", cfg, "benchmark", "--iterations", "2", "--concurrency", "2")
+	code, out := runRoot(t, "--config", cfg, "latency", "--iterations", "2", "--concurrency", "2")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
 	}
@@ -335,24 +335,47 @@ func TestBenchmarkRun(t *testing.T) {
 		t.Errorf("output missing request count\noutput:\n%s", out)
 	}
 	if !strings.Contains(out, "TTFB:") || !strings.Contains(out, "TTFT:") {
-		t.Errorf("streamed benchmark should report TTFB/TTFT\noutput:\n%s", out)
+		t.Errorf("streamed latency benchmark should report TTFB/TTFT\noutput:\n%s", out)
 	}
 	if !strings.Contains(out, "RPS:") {
 		t.Errorf("output missing RPS\noutput:\n%s", out)
 	}
 }
 
-func TestBenchmarkNoStream(t *testing.T) {
+func TestLatencyNoStream(t *testing.T) {
 	server := httptest.NewServer(apiMockHandler(t))
 	defer server.Close()
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 
-	code, out := runRoot(t, "--config", cfg, "--no-stream", "benchmark", "--iterations", "2", "--concurrency", "2")
+	code, out := runRoot(t, "--config", cfg, "--no-stream", "latency", "--iterations", "2", "--concurrency", "2")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
 	}
 	if strings.Contains(out, "TTFB:") || strings.Contains(out, "TTFT:") {
-		t.Errorf("non-streamed benchmark must omit TTFB/TTFT\noutput:\n%s", out)
+		t.Errorf("non-streamed latency benchmark must omit TTFB/TTFT\noutput:\n%s", out)
+	}
+}
+
+func TestThroughputRun(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	code, out := runRoot(t, "--config", cfg, "throughput", "--iterations", "2", "--concurrency", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "4 requests") {
+		t.Errorf("output missing request count\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "TPOT:") || !strings.Contains(out, "TPS:") {
+		t.Errorf("throughput benchmark should report TPOT/TPS\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "Tokens:") {
+		t.Errorf("output missing token stats\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "RPS:") {
+		t.Errorf("output missing RPS\noutput:\n%s", out)
 	}
 }
 
@@ -396,13 +419,13 @@ func TestCompatOutJSON(t *testing.T) {
 	}
 }
 
-func TestBenchmarkOutJSON(t *testing.T) {
+func TestLatencyOutJSON(t *testing.T) {
 	server := httptest.NewServer(apiMockHandler(t))
 	defer server.Close()
 	cfg := writeConfig(t, t.TempDir(), server.URL)
-	outPath := filepath.Join(t.TempDir(), "bench.json")
+	outPath := filepath.Join(t.TempDir(), "latency.json")
 
-	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "benchmark", "--iterations", "2", "--concurrency", "2")
+	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "latency", "--iterations", "2", "--concurrency", "2")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
@@ -430,5 +453,53 @@ func TestBenchmarkOutJSON(t *testing.T) {
 	// Latency mode: no throughput-only indicators.
 	if r.TPOT != nil || r.TPS != nil || r.Tokens != nil {
 		t.Errorf("latency report must omit tpot/tps/tokens: %+v", r)
+	}
+}
+
+func TestThroughputDefaults(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	code, out := runRoot(t, "--config", cfg, "throughput")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "9 requests") {
+		t.Errorf("throughput default should be 3x3=9 requests\noutput:\n%s", out)
+	}
+}
+
+func TestThroughputOutJSON(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+	outPath := filepath.Join(t.TempDir(), "throughput.json")
+
+	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "throughput", "--iterations", "2", "--concurrency", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reports []runner.BenchmarkJSONReport
+	if err := json.Unmarshal(data, &reports); err != nil {
+		t.Fatalf("parse report: %v\n%s", err, data)
+	}
+	r := reports[0]
+	if r.Mode != "throughput" {
+		t.Errorf("mode = %q, want throughput", r.Mode)
+	}
+	if r.TotalRequests != 4 || r.Failed != 0 {
+		t.Errorf("run params = %+v, want 4 requests, 0 failed", r)
+	}
+	// Throughput mode: tpot/tps/tokens required, ttfb/ttft also present (streamed).
+	if r.TPOT == nil || r.TPS == nil || r.Tokens == nil {
+		t.Errorf("throughput report must include tpot/tps/tokens: %+v", r)
+	}
+	if !r.Stream || r.TTFB == nil || r.TTFT == nil {
+		t.Errorf("streamed report must include ttfb/ttft: %+v", r)
 	}
 }
