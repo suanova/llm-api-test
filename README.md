@@ -147,6 +147,23 @@ request, minimum 10 minutes) is the backstop. While a benchmark runs, a live
 status line is printed to stderr (`[benchmark] elapsed 5s, 3/10 requests
 completed`) and cleared when the report prints.
 
+### Cache hit rate
+
+The `cache` command runs a session-shaped cache hit-rate test: a stable
+prefix (system prompt + tool definitions) plus a conversation history that
+grows one turn at a time, mirroring how agent clients (Claude Code, Codex)
+actually use prompt caching.
+
+```bash
+./llm-api-test cache                        # chat + messages
+./llm-api-test cache --api-format messages
+./llm-api-test cache --turns 5              # shorter session
+```
+
+Cache sessions are always non-streamed. The report shows per-turn
+cached/written tokens, session and warm-turn hit rates, and a verdict:
+`cache observed`, `no cache observed`, or `inconclusive`.
+
 ### Exit codes
 
 - `0` — all cases passed

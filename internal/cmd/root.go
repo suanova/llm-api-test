@@ -1,5 +1,5 @@
 // Package cmd wires the CLI: the root command with common flags and the
-// compatibility, latency, throughput, and list subcommands.
+// compatibility, latency, throughput, cache, and list subcommands.
 package cmd
 
 import (

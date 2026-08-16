@@ -468,10 +468,11 @@ type CacheTurn struct {
 
 // CacheCase is one simulated agent session. Turns are strictly sequential:
 // each turn grows the conversation history, mirroring real agent usage.
+// The session stops at the first failed turn.
 type CacheCase interface {
 	ID() string
 	Desc() string
-	RunSession(ctx context.Context, model string) []CacheTurn
+	RunSession(ctx context.Context, model string, turns int) []CacheTurn
 }
 ```
 
@@ -537,9 +538,9 @@ from turn 2.
 ### Text report
 
 ```
-  cache-messages  (8 turns, non-streamed)
+  messages:cache  (8 turns, non-streamed)
     Turn  prompt  cached  written  miss  read%   total
-      1    5234       0    5011   223   0.0%   1.24s
+      1    5234       0    5234    0   0.0%   1.24s
       2    5311    5011       0   300  94.4%   340ms
       ...
     Session hit rate: 85.2% (cached 28013 / prompt 32876)
