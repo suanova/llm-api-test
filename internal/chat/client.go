@@ -1,177 +1,134 @@
-// Package chat is a thin raw HTTP client for the OpenAI Chat Completions API
-// (POST /v1/chat/completions). Like internal/openai it avoids the SDK so we
-// exercise the real wire format.
+// Package chat implements the OpenAI Chat Completions API format
+// (POST /v1/chat/completions): the client, compatibility cases, and the
+// benchmark case. It deliberately avoids the official SDK so we exercise the
+// real wire format.
 package chat
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"strings"
+	"time"
 
 	"llm-api-test/internal/httpx"
+	"llm-api-test/internal/openai"
+	"llm-api-test/internal/registry"
 )
 
-// Client posts to /v1/chat/completions on a Chat-Completions-compatible server.
-type Client struct {
-	BaseURL string
-	APIKey  string
-	HTTP    *http.Client
-	// DebugWriter, if non-nil, receives a human-readable dump of each request
-	// and response. Sensitive headers are redacted.
-	DebugWriter io.Writer
-}
-
-func New(baseURL, apiKey string) *Client {
-	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		APIKey:  apiKey,
-		// No Timeout on the client — streaming responses can take a long time.
-		// Per-request timeouts are set via context in each method call.
-		HTTP: &http.Client{},
-	}
-}
-
-// Message is a single chat message. Content is a string for simple roles; for
-// tool/assistant messages it may be omitted. ToolCalls is set on assistant
-// messages that requested tool calls. ToolCallID links a tool-role message to
-// the call it answers.
+// Message is a single chat message.
 type Message struct {
-	Role       string      `json:"role"`
-	Content    string      `json:"content,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	Name       string      `json:"name,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content,omitempty"`
 }
 
-// ToolCall is a single tool call in an assistant message.
+// ToolCall is a tool call in an assistant response.
 type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
-}
-
-// ToolFunction is the function part of a tool call.
-type ToolFunction struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 // Tool is a tool definition in the request.
 type Tool struct {
-	Type     string          `json:"type"`
-	Function json.RawMessage `json:"function"`
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
 }
 
-// Request is a minimal subset of the Chat Completions request body. Extra
-// params (temperature, seed, n, logprobs, ...) go through Extra.
+// ToolFunction is the function part of a tool definition.
+type ToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// Request is the Chat Completions request body.
 type Request struct {
 	Model          string          `json:"model"`
 	Messages       []Message       `json:"messages"`
+	Stream         bool            `json:"stream,omitempty"`
 	Tools          []Tool          `json:"tools,omitempty"`
-	ToolChoice     json.RawMessage `json:"tool_choice,omitempty"` // string or object
-	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
-	// Extra passthrough params.
-	Extra map[string]json.RawMessage `json:"-"`
+	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
+	Seed                *int            `json:"seed,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
 }
 
-// SetExtra attaches a raw-JSON extra param to the request.
-func (r *Request) SetExtra(key string, val any) {
-	if r.Extra == nil {
-		r.Extra = map[string]json.RawMessage{}
-	}
-	b, err := json.Marshal(val)
-	if err != nil {
-		return
-	}
-	r.Extra[key] = b
+// Usage holds token counts from the response.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
-// Response is a minimal model of the Chat Completions response body. Raw is
-// kept for cases to inspect anything not modeled here.
+// Response is the non-streaming Chat Completions response body.
 type Response struct {
-	ID      string          `json:"id"`
-	Object  string          `json:"object"`
-	Model   string          `json:"model"`
-	Choices []Choice        `json:"choices"`
-	Usage   json.RawMessage `json:"usage"`
-	Raw     json.RawMessage `json:"-"`
+	Choices []struct {
+		Message struct {
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage *Usage `json:"usage"`
 }
 
-// Choice is a single completion alternative.
-type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason string  `json:"finish_reason"`
+// Result is the outcome of one chat completion request, shared by the
+// compatibility cases (content, tool calls) and the benchmark (metrics).
+type Result struct {
+	Content   string
+	ToolCalls []ToolCall
+	Usage     *Usage
+	Raw       string
+	Metrics   registry.Metrics
 }
 
-// CreateChatCompletion posts the request to /v1/chat/completions and returns
-// the parsed body. On non-2xx it returns a rich error including the raw body.
-func (c *Client) CreateChatCompletion(ctx context.Context, req *Request) (*Response, error) {
-	body, err := encodeRequest(req)
+// Client sends chat completion requests, streamed or not.
+type Client struct {
+	oc     *openai.Client
+	Stream bool
+}
+
+// New creates a chat client.
+func New(baseURL, apiKey string, debug io.Writer, stream bool) *Client {
+	return &Client{oc: openai.New(baseURL, apiKey, debug), Stream: stream}
+}
+
+// Send posts a chat completion request.
+func (c *Client) Send(ctx context.Context, req *Request) (*Result, error) {
+	if c.Stream {
+		return c.sendStream(ctx, req)
+	}
+	return c.sendPlain(ctx, req)
+}
+
+// sendPlain sends a non-streaming request and parses the JSON response.
+func (c *Client) sendPlain(ctx context.Context, req *Request) (*Result, error) {
+	start := time.Now()
+	status, data, err := c.oc.PostJSON(ctx, "/chat/completions", req)
 	if err != nil {
 		return nil, err
 	}
-
-	url := c.BaseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, httpx.Truncate(string(data), 500))
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-
-	if c.DebugWriter != nil {
-		httpx.DumpRequest(c.DebugWriter, httpReq, body)
-	}
-
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http: %w", err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	if c.DebugWriter != nil {
-		httpx.DumpResponse(c.DebugWriter, resp, raw)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &httpx.APIError{Status: resp.StatusCode, Body: raw}
-	}
-
 	var out Response
-	out.Raw = raw
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("decode response: %w (body: %s)", err, httpx.Truncate(string(raw), 500))
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	return &out, nil
-}
-
-// encodeRequest marshals the request, merging Extra fields into the top-level
-// JSON object so callers can add arbitrary params.
-func encodeRequest(req *Request) ([]byte, error) {
-	type alias Request
-	b, err := json.Marshal((*alias)(req))
-	if err != nil {
-		return nil, err
+	res := &Result{
+		Raw:     string(data),
+		Metrics: registry.Metrics{Total: time.Since(start)},
 	}
-	if len(req.Extra) == 0 {
-		return b, nil
+	if len(out.Choices) > 0 {
+		res.Content = out.Choices[0].Message.Content
+		res.ToolCalls = out.Choices[0].Message.ToolCalls
 	}
-	merged := map[string]json.RawMessage{}
-	if err := json.Unmarshal(b, &merged); err != nil {
-		return nil, err
+	if out.Usage != nil {
+		res.Usage = out.Usage
+		res.Metrics.PromptTokens = out.Usage.PromptTokens
+		res.Metrics.CompletionTokens = out.Usage.CompletionTokens
 	}
-	for k, v := range req.Extra {
-		merged[k] = v
-	}
-	return json.Marshal(merged)
+	return res, nil
 }

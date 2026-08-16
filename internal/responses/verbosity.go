@@ -4,32 +4,30 @@ import (
 	"context"
 
 	"llm-api-test/internal/cases"
-	"llm-api-test/internal/openai"
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// VerbosityCase verifies that the `text.verbosity` parameter is accepted by
-// sending a request with verbosity=low and checking for a 2xx response with
-// output text. (We don't assert length, since verbosity semantics vary.)
+// VerbosityCase verifies that the endpoint accepts text.verbosity.
 type VerbosityCase struct {
-	Client *openai.Client
+	client *Client
 }
 
-func (*VerbosityCase) Name() string { return "responses-verbosity" }
-func (*VerbosityCase) Desc() string { return "POST /responses accepts `text.verbosity`" }
+func (c *VerbosityCase) ID() string   { return "responses:text.verbosity" }
+func (c *VerbosityCase) Name() string { return "text.verbosity" }
+func (c *VerbosityCase) Desc() string { return "POST /responses accepts `text.verbosity`" }
 
-func (tc *VerbosityCase) Run(ctx context.Context, model string) *runner.Result {
-	req := &openai.Request{
+func (c *VerbosityCase) Run(ctx context.Context, model string) *registry.CompatResult {
+	req := &Request{
 		Model: model,
-		Input: mustInput("In one sentence, what is the Responses API?"),
-		Text:  &openai.Text{Verbosity: "low"},
+		Input: "Reply with exactly the word: pong",
+		Text:  &Text{Verbosity: "low"},
 	}
-	resp, err := tc.Client.CreateResponse(ctx, req)
+	res, err := c.client.Send(ctx, req)
 	if err != nil {
-		return cases.Fail(nil, "request with `text.verbosity` failed: %v", err)
+		return cases.Fail("request failed: %v", err)
 	}
-	if outputText(resp.Output) == "" {
-		return cases.Fail(resp.Raw, "no output_text in response")
+	if res.Content == "" && len(res.ToolCalls) == 0 {
+		return cases.FailRaw(res.Raw, "no output text")
 	}
-	return cases.Pass("text.verbosity accepted", resp.Raw)
+	return cases.Pass("text.verbosity accepted", res.Raw)
 }

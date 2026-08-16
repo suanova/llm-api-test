@@ -1,29 +1,28 @@
-// Package cases provides shared helpers used by API-specific case packages
-// (internal/responses, internal/chat). Each case package defines its own All()
-// that returns cases wired to a client for that API surface.
+// Package cases provides shared helpers for the format packages: result
+// constructors for compatibility cases, the benchmark prompt texts, and a
+// JSON marshaling helper.
 package cases
 
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// Fail returns a failing Result with a formatted detail message and the raw
-// response body (for debugging / --verbose).
-func Fail(raw json.RawMessage, format string, args ...any) *runner.Result {
-	return &runner.Result{
-		Pass:   false,
-		Detail: fmt.Sprintf(format, args...),
-		Raw:    string(raw),
-	}
+// Fail returns a failing CompatResult.
+func Fail(format string, args ...any) *registry.CompatResult {
+	return &registry.CompatResult{Detail: fmt.Sprintf(format, args...)}
 }
 
-// Pass returns a passing Result with a detail message and the raw body.
-func Pass(detail string, raw json.RawMessage) *runner.Result {
-	return &runner.Result{Pass: true, Detail: detail, Raw: string(raw)}
+// FailRaw is Fail with the raw response body attached (shown with --verbose).
+func FailRaw(raw string, format string, args ...any) *registry.CompatResult {
+	return &registry.CompatResult{Detail: fmt.Sprintf(format, args...), Raw: raw}
+}
+
+// Pass returns a passing CompatResult.
+func Pass(detail string, raw string) *registry.CompatResult {
+	return &registry.CompatResult{Pass: true, Detail: detail, Raw: raw}
 }
 
 // MustJSON marshals v to JSON, panicking only on impossible inputs. Handy for
@@ -36,7 +35,15 @@ func MustJSON(v any) json.RawMessage {
 	return b
 }
 
-// ContainsFold reports whether s contains sub, ignoring ASCII case.
-func ContainsFold(s, sub string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
-}
+// PongPrompt is the short prompt used by latency benchmarks.
+const PongPrompt = "Reply with exactly the word: pong"
+
+// LongPrompt is the long prompt used by throughput benchmarks. It asks for a
+// fixed-length article: the explicit length target makes output length
+// predictable and keeps the model writing, while a simple instruction keeps
+// the reasoning phase short and stable, so the measured TPS/TPOT mostly
+// reflect steady-state generation. ~3000 English words ≈ 4096 tokens, aligned
+// with the benchmark's generation cap.
+const LongPrompt = "Write a detailed article of about 3000 words about the " +
+	"history of the internet. Keep a consistent informative style with " +
+	"concrete examples, and do not stop until the article is complete."

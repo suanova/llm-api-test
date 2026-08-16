@@ -1,7 +1,11 @@
 package main
 
-import "llm-api-test/internal/cmd"
+import (
+	"os"
+
+	"llm-api-test/internal/cmd"
+)
 
 func main() {
-	cmd.NewRoot().Execute()
+	os.Exit(cmd.Execute())
 }

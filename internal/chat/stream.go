@@ -6,332 +6,113 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"llm-api-test/internal/httpx"
-	"llm-api-test/internal/runner"
 	"llm-api-test/internal/sse"
 )
 
-// StreamResult holds the timing and token metrics from a single streaming
-// Chat Completions request.
-type StreamResult struct {
-	Metrics    runner.StreamMetrics
-	Content    string     // accumulated content from all content deltas
-	ToolCalls  []ToolCall // tool calls from the stream (if any)
-	Raw        []byte     // final raw event (for debugging)
-	ChunkCount int        // number of SSE content chunks received
+// streamChunk is one SSE data payload from a streamed chat completion.
+type streamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
+		} `json:"delta"`
+	} `json:"choices"`
+	Usage *Usage `json:"usage"`
 }
 
-// StreamChatCompletion sends a streaming Chat Completions request and returns
-// timing metrics parsed from the SSE stream. The request must have
-// stream=true set (this method adds it automatically).
-func (c *Client) StreamChatCompletion(ctx context.Context, req *Request) (*StreamResult, error) {
-	// Force stream=true.
-	req.SetExtra("stream", true)
+// timedReader records the elapsed time of the first read, i.e. the time to
+// the first byte of the HTTP response body.
+type timedReader struct {
+	r     io.Reader
+	start time.Time
+	once  sync.Once
+	first time.Duration
+}
 
-	body, err := encodeRequest(req)
+func (t *timedReader) Read(p []byte) (int, error) {
+	t.once.Do(func() { t.first = time.Since(t.start) })
+	return t.r.Read(p)
+}
+
+// sendStream sends a streaming request, accumulates content and tool calls,
+// and records timing metrics (TTFB, TTFT, per-chunk TPOT).
+func (c *Client) sendStream(ctx context.Context, req *Request) (*Result, error) {
+	req.Stream = true
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+	start := time.Now()
+	resp, err := c.oc.Do(ctx, "/chat/completions", body)
 	if err != nil {
 		return nil, err
-	}
-
-	url := c.BaseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-
-	if c.DebugWriter != nil {
-		httpx.DumpRequest(c.DebugWriter, httpReq, body)
-	}
-
-	requestStart := time.Now()
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http: %w", err)
 	}
 	defer resp.Body.Close()
-
-	ttfb := time.Since(requestStart)
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		if c.DebugWriter != nil {
-			httpx.DumpResponse(c.DebugWriter, resp, raw)
-		}
-		return nil, &httpx.APIError{Status: resp.StatusCode, Body: raw}
+		data, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, httpx.Truncate(string(data), 500))
 	}
 
-	// Read the full response body so we can handle both SSE streaming and
-	// non-streaming (some servers ignore stream=true and return plain JSON).
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	// Parse SSE events.
-	parser := sse.NewParser(bytes.NewReader(bodyBytes))
-	var (
-		contentBuf  strings.Builder
-		ttft        time.Duration
-		hasTTFT     bool
-		usage       chatUsage
-		toolCalls   []ToolCall
-		finalRaw    []byte
-		chunkCount  int // count of content delta chunks (rough token proxy)
-		sseEvents   int
-	)
-
+	res := &Result{}
+	tr := &timedReader{r: resp.Body, start: start}
+	parser := sse.NewParser(tr)
+	var content, raw strings.Builder
+	var prevChunk time.Time
 	for {
-		event, err := parser.Next()
+		ev, err := parser.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("parse sse: %w", err)
+			return nil, fmt.Errorf("parse stream: %w", err)
 		}
-
-		if string(event.Data) == "[DONE]" {
+		if bytes.Equal(ev.Data, []byte("[DONE]")) {
 			break
 		}
+		raw.Write(ev.Data)
+		raw.WriteByte('\n')
 
-		finalRaw = event.Data
-		sseEvents++
-
-		// Debug: dump the first few SSE events so we can see the server's
-		// actual format.
-		if c.DebugWriter != nil && sseEvents <= 10 {
-			fmt.Fprintf(c.DebugWriter, "<<< SSE event #%d: %s\n", sseEvents, httpx.Truncate(string(event.Data), 500))
+		var ch streamChunk
+		if err := json.Unmarshal(ev.Data, &ch); err != nil {
+			return nil, fmt.Errorf("decode chunk: %w", err)
 		}
-
-		var chunk chatStreamChunk
-		if err := json.Unmarshal(event.Data, &chunk); err != nil {
-			// Skip unparseable events (some servers send keepalive comments).
+		if ch.Usage != nil {
+			res.Usage = ch.Usage
+			res.Metrics.PromptTokens = ch.Usage.PromptTokens
+			res.Metrics.CompletionTokens = ch.Usage.CompletionTokens
+		}
+		if len(ch.Choices) == 0 {
 			continue
 		}
-
-		// Extract content delta for TTFT.
-		content := ""
-		reasoning := ""
-		if len(chunk.Choices) > 0 {
-			content = chunk.Choices[0].Delta.Content
-			reasoning = chunk.Choices[0].Delta.ReasoningContent
-		}
-		// Fallback: some compatible servers put content in a different location.
-		// Try extracting via raw map if the structured parse found nothing.
-		if content == "" && reasoning == "" {
-			content = extractChatContent(event.Data)
-		}
-
-		// Track reasoning tokens for TTFT — reasoning tokens arrive before
-		// content tokens for thinking models, so TTFT should be measured from
-		// the first token of any kind (reasoning or content).
-		if reasoning != "" {
-			if !hasTTFT {
-				ttft = time.Since(requestStart)
-				hasTTFT = true
+		delta := ch.Choices[0].Delta
+		if delta.Content != "" {
+			now := time.Now()
+			if res.Metrics.TTFT == 0 {
+				res.Metrics.TTFT = now.Sub(start)
 			}
-			chunkCount++
-		}
-
-		if content != "" {
-			if !hasTTFT {
-				ttft = time.Since(requestStart)
-				hasTTFT = true
+			if !prevChunk.IsZero() {
+				res.Metrics.TPOTs = append(res.Metrics.TPOTs, now.Sub(prevChunk))
 			}
-			contentBuf.WriteString(content)
-			chunkCount++
+			prevChunk = now
+			content.WriteString(delta.Content)
+			res.Metrics.Chunks++
+			res.Metrics.ContentBytes += len(delta.Content)
 		}
-
-		if len(chunk.Choices) > 0 {
-			// Extract tool call deltas.
-			for _, tc := range chunk.Choices[0].Delta.ToolCalls {
-				idx := tc.Index
-				for len(toolCalls) <= idx {
-					toolCalls = append(toolCalls, ToolCall{
-						ID:       tc.ID,
-						Type:     tc.Type,
-						Function: ToolFunction{Name: tc.Function.Name},
-					})
-				}
-				if tc.ID != "" {
-					toolCalls[idx].ID = tc.ID
-				}
-				if tc.Type != "" {
-					toolCalls[idx].Type = tc.Type
-				}
-				if tc.Function.Name != "" {
-					toolCalls[idx].Function.Name = tc.Function.Name
-				}
-				toolCalls[idx].Function.Arguments += tc.Function.Arguments
-			}
-		}
-
-		// Extract usage if present (usually in the last chunk when
-		// stream_options.include_usage=true is set).
-		if chunk.Usage.CompletionTokens > 0 || chunk.Usage.PromptTokens > 0 {
-			usage = chunk.Usage
-		}
+		res.ToolCalls = append(res.ToolCalls, delta.ToolCalls...)
 	}
 
-	totalTime := time.Since(requestStart)
-
-	// Fallback: if SSE parsing found zero events, the server likely
-	// returned a non-streaming JSON body (ignoring stream=true).
-	// Parse it as a regular Chat Completions response.
-	if chunkCount == 0 {
-		var resp Response
-		if json.Unmarshal(bodyBytes, &resp) == nil {
-			if len(resp.Choices) > 0 {
-				text := resp.Choices[0].Message.Content
-				if text != "" {
-					if !hasTTFT {
-						// For a non-streaming response, TTFT = totalTime.
-						ttft = totalTime
-						hasTTFT = true
-					}
-					contentBuf.WriteString(text)
-					chunkCount = 1
-					finalRaw = bodyBytes
-				}
-			}
-			// Extract usage from non-streaming response.
-			if resp.Usage != nil {
-				var u chatUsage
-				if json.Unmarshal(resp.Usage, &u) == nil {
-					usage = u
-				}
-			}
-		}
+	m := &res.Metrics
+	m.Total = time.Since(start)
+	m.TTFB = tr.first
+	res.Content = content.String()
+	res.Raw = raw.String()
+	if c.oc.Debug != nil {
+		httpx.DumpResponse(c.oc.Debug, resp, []byte(res.Raw))
 	}
-
-	// Token counting priority:
-	// 1. usage.CompletionTokens (most accurate, requires stream_options)
-	// 2. content chunk count (each SSE content delta ≈ 1 token)
-	// 3. character-based heuristic (len/4)
-	tokens := usage.CompletionTokens
-	if tokens <= 0 {
-		tokens = chunkCount
-	}
-	if tokens <= 0 {
-		tokens = countApproxTokens(contentBuf.String())
-	}
-
-	if !hasTTFT {
-		// If we never got a content delta, TTFT equals total time
-		// (the model produced no content, only the final event).
-		ttft = totalTime
-	}
-
-	metrics := runner.StreamMetrics{
-		TTFB:             ttfb,
-		TTFT:             ttft,
-		TotalTime:        totalTime,
-		CompletionTokens: tokens,
-		PromptTokens:     usage.PromptTokens,
-		ReasoningTokens:  usage.ReasoningTokens,
-		ContentLen:       contentBuf.Len(),
-		ChunkCount:       chunkCount,
-	}
-
-	if c.DebugWriter != nil {
-		httpx.DumpResponse(c.DebugWriter, resp, finalRaw)
-	}
-
-	return &StreamResult{
-		Metrics:    metrics,
-		Content:    contentBuf.String(),
-		ToolCalls:  toolCalls,
-		Raw:        finalRaw,
-		ChunkCount: chunkCount,
-	}, nil
-}
-
-// chatStreamChunk is a minimal model of a streaming Chat Completions chunk.
-type chatStreamChunk struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Choices []streamChoice  `json:"choices"`
-	Usage   chatUsage       `json:"usage,omitempty"`
-}
-
-type streamChoice struct {
-	Index        int         `json:"index"`
-	Delta        streamDelta `json:"delta"`
-	FinishReason string      `json:"finish_reason"`
-}
-
-type streamDelta struct {
-	Role             string           `json:"role,omitempty"`
-	Content          string           `json:"content,omitempty"`
-	ReasoningContent string           `json:"reasoning_content,omitempty"`
-	ToolCalls        []streamToolCall `json:"tool_calls,omitempty"`
-}
-
-type streamToolCall struct {
-	Index    int    `json:"index"`
-	ID       string `json:"id,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Function struct {
-		Name      string `json:"name,omitempty"`
-		Arguments string `json:"arguments,omitempty"`
-	} `json:"function"`
-}
-
-type chatUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-// countApproxTokens provides a rough token estimate when usage is unavailable.
-// Uses the heuristic that 1 token ≈ 4 characters for English text.
-func countApproxTokens(s string) int {
-	if len(s) == 0 {
-		return 0
-	}
-	return len(s) / 4
-}
-
-// extractChatContent is a fallback that tries to extract content text from a
-// Chat Completions SSE event when the structured parse finds nothing. It
-// handles servers that use non-standard field names or nesting.
-func extractChatContent(data json.RawMessage) string {
-	var raw map[string]json.RawMessage
-	if json.Unmarshal(data, &raw) != nil {
-		return ""
-	}
-
-	// Try choices[0].delta.content via raw map (handles minor schema differences).
-	if choicesRaw, ok := raw["choices"]; ok {
-		var choices []map[string]json.RawMessage
-		if json.Unmarshal(choicesRaw, &choices) == nil && len(choices) > 0 {
-			if deltaRaw, ok := choices[0]["delta"]; ok {
-				var delta map[string]json.RawMessage
-				if json.Unmarshal(deltaRaw, &delta) == nil {
-					// Try "content" field.
-					if cRaw, ok := delta["content"]; ok {
-						var s string
-						if json.Unmarshal(cRaw, &s) == nil && s != "" {
-							return s
-						}
-					}
-					// Try "text" field (some servers use this instead of "content").
-					if tRaw, ok := delta["text"]; ok {
-						var s string
-						if json.Unmarshal(tRaw, &s) == nil && s != "" {
-							return s
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return ""
+	return res, nil
 }

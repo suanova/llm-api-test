@@ -2,47 +2,33 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
-	"time"
 
-	"llm-api-test/internal/runner"
+	"llm-api-test/internal/registry"
 )
 
-// BenchmarkNonStreaming sends a non-streaming Chat Completions request and
-// returns latency metrics. Used as a fallback when streaming is not supported
-// by the server.
-func (c *Client) BenchmarkNonStreaming(ctx context.Context, req *Request) runner.StreamMetrics {
-	start := time.Now()
-	resp, err := c.CreateChatCompletion(ctx, req)
+// BenchmarkCase measures latency/throughput of single chat completions.
+type BenchmarkCase struct {
+	client *Client
+}
+
+func (c *BenchmarkCase) ID() string   { return "chat:benchmark" }
+func (c *BenchmarkCase) Desc() string { return "POST /v1/chat/completions latency/throughput" }
+
+func (c *BenchmarkCase) Run(ctx context.Context, model, prompt string) *registry.Metrics {
+	maxTokens := 4096
+	req := &Request{
+		Model: model,
+		Messages: []Message{{Role: "user", Content: prompt}},
+		// Bound generation: without a cap, a thorough prompt can run for
+		// minutes, and output length is not what throughput measures. Note
+		// that some providers (e.g. DeepSeek v4) ignore max_completion_tokens
+		// entirely; the benchmark context timeout is the backstop there.
+		MaxCompletionTokens: &maxTokens,
+	}
+	res, err := c.client.Send(ctx, req)
 	if err != nil {
-		return runner.StreamMetrics{Err: err}
+		return &registry.Metrics{Err: err}
 	}
-	totalTime := time.Since(start)
-
-	text := ""
-	if len(resp.Choices) > 0 {
-		text = resp.Choices[0].Message.Content
-	}
-
-	tokens := 0
-	var usage chatUsage
-	if resp.Usage != nil {
-		json.Unmarshal(resp.Usage, &usage)
-	}
-	tokens = usage.CompletionTokens
-	if tokens <= 0 {
-		tokens = countApproxTokens(text)
-	}
-
-	return runner.StreamMetrics{
-		TTFB:             totalTime,
-		TTFT:             totalTime,
-		TotalTime:        totalTime,
-		CompletionTokens: tokens,
-		PromptTokens:     usage.PromptTokens,
-		ReasoningTokens:  usage.ReasoningTokens,
-		ContentLen:       len(text),
-		ChunkCount:       1,
-		NonStreaming:     true,
-	}
+	m := res.Metrics
+	return &m
 }
