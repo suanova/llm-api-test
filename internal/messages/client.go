@@ -31,8 +31,9 @@ type SystemBlock struct {
 
 // Message is a single user/assistant message.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content,omitempty"`
+	Role         string        `json:"role"`
+	Content      string        `json:"content,omitempty"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
 // Thinking configures extended thinking.
@@ -43,9 +44,10 @@ type Thinking struct {
 
 // Tool is a tool definition in the request.
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 }
 
 // Request is the Messages API request body.
@@ -62,8 +64,10 @@ type Request struct {
 
 // Usage holds token counts from the response.
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // ContentBlock is one entry in the response content array.
