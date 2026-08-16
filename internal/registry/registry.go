@@ -49,6 +49,25 @@ type BenchmarkCase interface {
 	Run(ctx context.Context, model, prompt string) *Metrics
 }
 
+// CacheTurn is the observation from one session turn.
+type CacheTurn struct {
+	Turn         int
+	PromptTokens int // total prompt tokens this request
+	Cached       int // tokens served from cache (read)
+	CacheWrite   int // tokens written to cache; 0 for chat (automatic cache)
+	Total        time.Duration
+	Err          error // non-nil: turn failed, session aborts
+}
+
+// CacheCase is one simulated agent session. Turns are strictly sequential:
+// each turn grows the conversation history, mirroring real agent usage.
+// The session stops at the first failed turn.
+type CacheCase interface {
+	ID() string
+	Desc() string
+	RunSession(ctx context.Context, model string, turns int) []CacheTurn
+}
+
 // Params carries run-wide settings into format construction.
 type Params struct {
 	Config *config.Config
@@ -63,4 +82,5 @@ type Format struct {
 	Desc      string
 	Cases     func(Params) []CompatCase // ordered: basic first
 	Benchmark func(Params) BenchmarkCase
+	Cache     func(Params) CacheCase // nil when the format has no cache test
 }
