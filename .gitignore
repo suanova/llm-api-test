@@ -5,13 +5,17 @@
 config*.yaml
 !config.example.yaml
 
+# AI helper
 .codegraph
+.superpowers
 
 # reports
+reports
 *-report-*.md
 *.txt
 
 # Test artifacts
+logs
 *.out
 *.log
 
