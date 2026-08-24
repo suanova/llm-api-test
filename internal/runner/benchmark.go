@@ -20,6 +20,7 @@ type BenchmarkReport struct {
 	Concurrency             int
 	TotalRequests           int
 	Failed                  int
+	Errors                  []string // per-request error text of failed requests
 	Stream                  bool
 	TTFB, TTFT, Total, TPOT Summary
 	TPS                     FloatSummary
@@ -139,6 +140,9 @@ func FormatBenchmarkReport(r BenchmarkReport) string {
 	}
 	fmt.Fprintf(&b, "    RPS:    %.1f req/s\n", r.RPS)
 	fmt.Fprintf(&b, "    Failed: %d/%d\n", r.Failed, r.TotalRequests)
+	for _, e := range r.Errors {
+		fmt.Fprintf(&b, "      error: %s\n", e)
+	}
 	fmt.Fprintf(&b, "    Elapsed: %s\n", r.Elapsed.Round(100*time.Millisecond))
 	return b.String()
 }
