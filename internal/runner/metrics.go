@@ -121,6 +121,7 @@ func aggregate(metrics []registry.Metrics) BenchmarkReport {
 	for _, m := range metrics {
 		if m.Err != nil {
 			r.Failed++
+			r.Errors = append(r.Errors, m.Err.Error())
 			continue
 		}
 		successes++

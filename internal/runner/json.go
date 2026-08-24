@@ -99,7 +99,8 @@ type BenchmarkJSONReport struct {
 	Concurrency     int             `json:"concurrency"`
 	TotalRequests   int             `json:"total_requests"` // iterations * concurrency
 	Failed          int             `json:"failed"`
-	TTFB            *StatsJSON      `json:"ttfb,omitempty"` // omitted when !stream
+	Errors          []string        `json:"errors,omitempty"` // per-request error text of failed requests
+	TTFB            *StatsJSON      `json:"ttfb,omitempty"`   // omitted when !stream
 	TTFT            *StatsJSON      `json:"ttft,omitempty"`
 	Total           StatsJSON       `json:"total"`
 	TPOT            *StatsJSON      `json:"tpot,omitempty"` // throughput mode, streamed
@@ -127,6 +128,7 @@ func (r BenchmarkReport) JSON(model, baseURL, apiFormat string) BenchmarkJSONRep
 		Concurrency:     r.Concurrency,
 		TotalRequests:   r.TotalRequests,
 		Failed:          r.Failed,
+		Errors:          r.Errors,
 		Total:           statsJSON(r.Total),
 		AvgContentBytes: r.AvgContentBytes,
 		AvgChunks:       r.AvgChunks,

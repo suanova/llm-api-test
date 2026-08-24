@@ -169,6 +169,11 @@ Before writing the page, load the `artifact-design` skill to calibrate the
 design effort. Keep the favicon emoji stable across updates (e.g. ⚡ for
 benchmark reports).
 
+Start the file with `<meta charset="utf-8">` (right before `<title>`). The
+page is opened directly (file://, a static server) as often as it is viewed
+as an Artifact, and without the declaration non-ASCII text (e.g. Chinese
+reports) renders as mojibake.
+
 ## Pitfalls (learned the hard way)
 
 - **DeepSeek ignores `max_completion_tokens`** — benchmark caps are
@@ -184,3 +189,7 @@ benchmark reports).
   the tool's stream parser before blaming the provider.
 - **A FAIL with `HTTP 4xx` from a "supported" feature** usually means the
   provider doesn't implement that feature — quote the error in the report.
+- **HTML pages need an explicit `<meta charset="utf-8">`** — files opened
+  directly (not through the Artifact wrapper) otherwise get no charset, and
+  non-ASCII (e.g. Chinese) text silently renders as mojibake. Only caught at
+  browser-verification time, so declare it from the start.
