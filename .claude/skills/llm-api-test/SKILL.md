@@ -160,19 +160,19 @@ For single-provider runs, keep the same sections minus the comparison ones
 
 ### 2. Static HTML page with charts (always, when benchmark data exists)
 
-Publish an Artifact (via the Artifact tool) titled like the report, showing:
+Save to `reports/` alongside the markdown report (e.g.
+`reports/benchmark-YYMMDD-<desc>.html`), showing:
 - bar charts comparing p50 (and p95/p99) Total per endpoint/model — inline
-  SVG or mermaid, no external libs (Artifacts are strictly static, CSP-blocked)
+  SVG, no external libraries (self-contained; the page is opened directly via
+  file:// or a static server)
 - the results table, stability notes, and the recommendation
 
 Before writing the page, load the `artifact-design` skill to calibrate the
-design effort. Keep the favicon emoji stable across updates (e.g. ⚡ for
-benchmark reports).
+design effort.
 
 Start the file with `<meta charset="utf-8">` (right before `<title>`). The
-page is opened directly (file://, a static server) as often as it is viewed
-as an Artifact, and without the declaration non-ASCII text (e.g. Chinese
-reports) renders as mojibake.
+page is opened directly (file://, a static server), and without the
+declaration non-ASCII text (e.g. Chinese reports) renders as mojibake.
 
 ## Pitfalls (learned the hard way)
 
@@ -190,6 +190,6 @@ reports) renders as mojibake.
 - **A FAIL with `HTTP 4xx` from a "supported" feature** usually means the
   provider doesn't implement that feature — quote the error in the report.
 - **HTML pages need an explicit `<meta charset="utf-8">`** — files opened
-  directly (not through the Artifact wrapper) otherwise get no charset, and
-  non-ASCII (e.g. Chinese) text silently renders as mojibake. Only caught at
-  browser-verification time, so declare it from the start.
+  directly otherwise get no charset, and non-ASCII (e.g. Chinese) text
+  silently renders as mojibake. Only caught at browser-verification time, so
+  declare it from the start.
