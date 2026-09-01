@@ -474,6 +474,20 @@ func TestLatencyOutJSON(t *testing.T) {
 	}
 }
 
+func TestLatencyDefaults(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	code, out := runRoot(t, "--config", cfg, "latency")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "50 requests") {
+		t.Errorf("latency default should be 10x5=50 requests\noutput:\n%s", out)
+	}
+}
+
 func TestThroughputDefaults(t *testing.T) {
 	server := httptest.NewServer(apiMockHandler(t))
 	defer server.Close()
