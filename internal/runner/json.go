@@ -228,3 +228,119 @@ func WriteJSON(path string, v any) error {
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
+
+// SoakJSONClassCount is one failure-class tally in JSON form.
+type SoakJSONClassCount struct {
+	Class string `json:"class"`
+	Count int    `json:"count"`
+}
+
+// SoakJSONFailure is one failed soak turn in JSON form.
+type SoakJSONFailure struct {
+	ElapsedMS int64  `json:"elapsed_ms"`
+	Turn      int    `json:"turn"`
+	Long      bool   `json:"long,omitempty"`
+	Class     string `json:"class"`
+	TotalMS   int64  `json:"total_ms"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// SoakJSONProbe is one idle-probe outcome in JSON form.
+type SoakJSONProbe struct {
+	AtMS    int64  `json:"at_ms"`
+	GapMS   int64  `json:"gap_ms"`
+	Turn    int    `json:"turn"`
+	Class   string `json:"class"`
+	TotalMS int64  `json:"total_ms"`
+}
+
+// SoakJSONBucket is one latency bucket in JSON form. P50MS is the p50 of
+// ok-turn totals and is omitted when the bucket has no ok turns.
+type SoakJSONBucket struct {
+	StartMS int64 `json:"start_ms"`
+	Turns   int   `json:"turns"`
+	Ok      int   `json:"ok"`
+	P50MS   int64 `json:"p50_ms,omitempty"`
+}
+
+// SoakJSONReport is one soak session in JSON form.
+type SoakJSONReport struct {
+	Model      string               `json:"model"`
+	BaseURL    string               `json:"base_url"`
+	APIFormat  string               `json:"api_format"`
+	CaseID     string               `json:"case_id"`
+	DurationMS int64                `json:"duration_ms"`
+	IntervalMS int64                `json:"interval_ms"`
+	StallMS    int64                `json:"stall_ms"`
+	LongEvery  int                  `json:"long_every"`
+	Turns      int                  `json:"turns"`
+	Ok         int                  `json:"ok_turns"`
+	Failed     int                  `json:"failed_turns"`
+	LongTurns  int                  `json:"long_turns"`
+	Aborted    bool                 `json:"aborted"`
+	Classes    []SoakJSONClassCount `json:"classes"`
+	Failures   []SoakJSONFailure    `json:"failures,omitempty"`
+	Probes     []SoakJSONProbe      `json:"idle_probes,omitempty"`
+	Buckets    []SoakJSONBucket     `json:"latency_buckets"`
+	OkP50MS    int64                `json:"ok_total_p50_ms,omitempty"`
+	ElapsedMS  int64                `json:"elapsed_ms"`
+}
+
+// SoakJSON converts a soak report into machine-readable form.
+func (r SoakReport) SoakJSON(model, baseURL, apiFormat string) SoakJSONReport {
+	j := SoakJSONReport{
+		Model:      model,
+		BaseURL:    baseURL,
+		APIFormat:  apiFormat,
+		CaseID:     r.CaseID,
+		DurationMS: r.Planned.Milliseconds(),
+		IntervalMS: r.Interval.Milliseconds(),
+		StallMS:    r.Stall.Milliseconds(),
+		LongEvery:  r.LongEvery,
+		Turns:      r.Turns,
+		Ok:         r.Ok,
+		Failed:     r.Failed,
+		LongTurns:  r.LongTurns,
+		Aborted:    r.Aborted,
+		OkP50MS:    r.OkTotalP50.Milliseconds(),
+		ElapsedMS:  r.Elapsed.Milliseconds(),
+		Classes:    make([]SoakJSONClassCount, 0, len(r.ClassCounts)),
+		Failures:   make([]SoakJSONFailure, 0, len(r.Failures)),
+		Probes:     make([]SoakJSONProbe, 0, len(r.Probes)),
+		Buckets:    make([]SoakJSONBucket, 0, len(r.Buckets)),
+	}
+	for _, c := range r.ClassCounts {
+		j.Classes = append(j.Classes, SoakJSONClassCount{Class: string(c.Class), Count: c.Count})
+	}
+	for _, f := range r.Failures {
+		jf := SoakJSONFailure{
+			ElapsedMS: f.Elapsed.Milliseconds(),
+			Turn:      f.Turn,
+			Long:      f.Long,
+			Class:     string(f.Class),
+			TotalMS:   f.Total.Milliseconds(),
+		}
+		if f.Err != nil {
+			jf.Detail = f.Err.Error()
+		}
+		j.Failures = append(j.Failures, jf)
+	}
+	for _, p := range r.Probes {
+		j.Probes = append(j.Probes, SoakJSONProbe{
+			AtMS:    p.At.Milliseconds(),
+			GapMS:   p.Gap.Milliseconds(),
+			Turn:    p.Turn,
+			Class:   string(p.Class),
+			TotalMS: p.Total.Milliseconds(),
+		})
+	}
+	for _, b := range r.Buckets {
+		j.Buckets = append(j.Buckets, SoakJSONBucket{
+			StartMS: b.Start.Milliseconds(),
+			Turns:   b.Turns,
+			Ok:      b.Ok,
+			P50MS:   b.TotalP50.Milliseconds(),
+		})
+	}
+	return j
+}

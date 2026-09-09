@@ -47,6 +47,42 @@ response.
 Tool cases use a custom `function` tool (`get_weather`) rather than built-in
 tools, so they work against any compatible endpoint.
 
+## What each test measures & costs
+
+Estimated token spend per default run. Rough figures: English ≈ 4 chars per
+token, prompts differ slightly per model/tokenizer, and `usage` reporting
+varies by provider — the authoritative numbers are the provider's own usage
+fields, echoed in the `-o report.json` output.
+
+| Test | Default load | Prompt | Gen cap | Est. tokens per run |
+|---|---|---|---|---|
+| `latency` | 10 iters × 5 concurrency = 50 requests | `"Reply with exactly the word: pong"` | 4096 (unused: the model just replies "pong") | ~1k total; finishes in seconds |
+| `throughput` | 3 iters × 3 concurrency = 9 requests | ~3000-word article task (short instruction, long generation) | 4096 \* | ~40-60k output; ~3-5 min |
+| `cache` | 1 session, 8 turns, history grows each turn | ~2k-token system prompt + 170-line knowledge base + 6 tool schemas, then one question per turn | 300 per turn | ~50k input per session (~90% served from cache on warm turns, billed at the provider's cache-read rate), ~2.4k output max |
+| `soak` | 1 hour: ~120 short turns + 12 long turns (`--long-every 10`) | short: `"Reply with exactly the word: ok"`; long: ~400-500-word writing task | 64 / 512 | ~10-15k total; the cost is an hour of run time, not tokens |
+
+\* Generation caps are best-effort: some providers (e.g. DeepSeek v4) ignore
+them, so a thorough prompt can run longer and output more than the cap — the
+per-request timeout is the real bound. The same caveat applies to the soak
+long-turn budget.
+
+What each test is for:
+
+- **`latency`** — per-request round-trip and time-to-first-token under light
+  load. Cheap enough to run repeatedly; use it to compare endpoints
+  (TTFB/TTFT/Total percentiles).
+- **`throughput`** — steady-state generation speed (TPOT/TPS) on a long
+  output. The expensive one: one 3×3 run ≈ 50k+ output tokens, about the
+  same as an hour of `soak`. Run it when you need generation-speed numbers,
+  not as a default check.
+- **`cache`** — whether the endpoint's prompt caching actually hits on a
+  session-shaped workload (system + tools + growing history). Input tokens
+  dominate, but warm turns should be mostly cache reads; a run is cheap on
+  providers with low cache-read pricing.
+- **`soak`** — long-window gateway/proxy stability (drops, stalls, 5xx/429
+  bursts, latency drift). Token cost is trivial; what it costs you is the
+  run time (an hour by default).
+
 ## Install / build
 
 ```bash
@@ -164,6 +200,44 @@ Cache sessions are always non-streamed. The report shows per-turn
 cached/written tokens, session and warm-turn hit rates, and a verdict:
 `cache observed`, `no cache observed`, or `inconclusive`.
 
+### Soak (long-duration stability)
+
+The `soak` command keeps sending streamed requests over a long stretch of
+real time (default 1 hour) and classifies every failure, to surface gateway
+and proxy stability problems that short runs miss: mid-stream cuts, silent
+stalls, sustained-load 5xx/429s, and latency drift.
+
+```bash
+# chat + messages, 1 hour, one turn every 30s
+./llm-api-test soak -c config.astraflow.yaml
+
+# shorter probe run: 10 minutes, faster cadence
+./llm-api-test soak -c config.astraflow.yaml --duration 10m --interval 15s
+
+# continuous interaction only (no idle probes)
+./llm-api-test soak --idle-gaps ""
+```
+
+- Turns are independent short streamed requests (a long-generation turn runs
+  every 10th by default via `--long-every`). A failed turn does not abort the
+  session — the next turn shows whether the failure was transient.
+- **Idle probes** (default `--idle-gaps 1m,5m,10m`, spread evenly across the
+  run) pause traffic for the given stretches, then report the first turn
+  after the gap. A proxy that kills idle keep-alive connections shows up as a
+  failure or latency spike on resume. The soak client holds idle connections
+  for hours so the default 90s client-side reap does not mask the proxy's own
+  timeout.
+- **Stall watchdog**: a stream that produces no event for `--stall` (default
+  60s) is torn down and reported as `stall`.
+- Every failure is classified: `conn` (connection reset/refused),
+  `timeout`, `stall`, `dropped` (stream ended before its completion marker),
+  `http-429`, `http-5xx`, `http-4xx`, `other`. The report shows per-class
+  tallies, a failure timeline with timestamps, idle-probe results, and
+  latency per time bucket (drift detection).
+
+Report and exit-code conventions match the other commands: `-o report.json`
+writes JSON (one object per model/format), and any failed turn exits `1`.
+
 ### Exit codes
 
 - `0` — all cases passed
@@ -232,7 +306,7 @@ model/format run); see `docs/design.md` for the schema.
 
 ```
 cmd/llm-api-test/main.go     # entrypoint
-internal/cmd/                # cobra CLI: compatibility / latency / throughput / list
+internal/cmd/                # cobra CLI: compatibility / latency / throughput / cache / soak / list
 internal/chat/               # Chat Completions format: client, cases, benchmark
 internal/responses/          # Responses format: client, cases, benchmark
 internal/messages/           # Anthropic Messages format: client, cases, benchmark

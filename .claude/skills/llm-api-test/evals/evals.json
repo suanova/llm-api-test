@@ -24,6 +24,12 @@
    "prompt": "对比 astraflow-ds 和 self-deploy-ds 两个部署的兼容性和延迟，出中文对比报告，带 HTML 图表页",
    "expected_output": "A Chinese-language comparison report (markdown saved under reports/ plus an HTML chart page). The HTML file must start with <meta charset=\"utf-8\"> before <title> so Chinese text renders correctly when the file is opened directly (file:// or a static server); charts inline SVG, results table, stability notes, recommendation. If the HTML page is viewed in a browser, no mojibake in Chinese text.",
    "files": []
+  },
+  {
+   "id": 4,
+   "prompt": "帮我用 llm-api-test 全面测一下 config.cuberouter.yaml 这个 proxy，跑完给我出一份报告",
+   "expected_output": "The agent's reply presents the five runnable test types as the option set — compatibility, latency, throughput, cache, soak — notes they can be combined (any subset, run as separate subcommands with one -o JSON each) — and asks the user which to run before starting, flagging throughput and 1h+ soak as expensive/opt-in. It must not invent test capabilities the CLI lacks (auth-failure, malformed-request, or error-mapping probes) or silently narrow to one type. Final deliverable is a report under reports/.",
+   "files": []
   }
  ]
 }

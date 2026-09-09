@@ -1,6 +1,6 @@
 ---
 name: llm-api-test
-description: Run LLM provider API compatibility tests and latency/throughput benchmarks with this repo's llm-api-test CLI, and generate comparison reports (markdown + static HTML page with charts). Use whenever the user asks to test LLM API compatibility, benchmark LLM latency/throughput (延迟/吞吐), compare multiple providers or endpoints (对比/哪个快/差距), or generate a test/benchmark report — even if they don't name the tool. Covers both OpenAI-style endpoints (chat/responses) and Anthropic-style endpoints (messages), including proxies (Astraflow, Cuberouter) and official APIs (DeepSeek).
+description: Run LLM provider API tests with this repo's llm-api-test CLI and generate comparison reports (markdown + static HTML page with charts). The CLI has five runnable test types — compatibility (兼容性), latency (延迟), throughput (吞吐), cache hit-rate (缓存), soak stability (稳定性/长稳) — combinable in any subset in one job. Use whenever the user asks to test LLM API compatibility, benchmark latency/throughput (延迟/吞吐), measure prompt-cache hits (缓存), run soak/stability checks, compare multiple providers or endpoints (对比/哪个快/差距), or generate a test/benchmark report — even if they don't name the tool. Covers both OpenAI-style endpoints (chat/responses) and Anthropic-style endpoints (messages), including proxies (Astraflow, Cuberouter) and official APIs (DeepSeek).
 ---
 
 # llm-api-test: provider compatibility & benchmark reports
@@ -8,21 +8,47 @@ description: Run LLM provider API compatibility tests and latency/throughput ben
 Run the repo's CLI against one or more provider configs, then produce a
 report the user can share. Two typical jobs:
 
-1. **Single provider**: test compatibility and/or benchmark, output one report.
-2. **Multi-provider comparison**: run the SAME case set / benchmark on several
-   configs, compare side by side, output a comparison report + chart page.
+1. **Single provider**: run one or more of the five test types (below),
+   output one report.
+2. **Multi-provider comparison**: run the SAME test types on several configs,
+   compare side by side, output a comparison report + chart page.
 
 Work from the conversation, but if anything is unspecified, ask (AskUserQuestion
-is fine) rather than guessing — especially mode, providers, and benchmark load.
+is fine) rather than guessing — especially test types, providers, and load.
+
+## What you can run — present the full menu
+
+The CLI runs exactly five test types, one subcommand each. When the user
+hasn't named the type(s), your reply must present this menu and ask which to
+run — never silently narrow to one type, and never invent tests the CLI
+can't run (it has no auth-failure, malformed-request, or error-mapping
+probes; only the five types below):
+
+| Type | What it answers | API formats | Cost |
+|---|---|---|---|
+| `compatibility` | does the API implement the feature surface? (17 cases) | chat, responses, messages | cheap |
+| `latency` | how fast is a short request (TTFB/TTFT/Total)? | chat, responses, messages | cheap |
+| `throughput` | how fast does it generate (tokens/s, long prompt)? | chat, responses, messages | **expensive — opt-in** |
+| `cache` | does prompt caching actually hit in a session? | chat, messages | ~1-2 min |
+| `soak` | is it stable over a long window (drops, stalls, idle resets)? | chat, messages | **1h+ — never unprompted** |
+
+Types **combine freely** in one job: run the chosen subset as separate
+subcommands against the same config(s), each writing its own
+`-o <type>-<desc>.json` (a shared `-o` path would be overwritten), then
+merge all JSONs into the single report. Exact commands per type below;
+token/wall-clock figures in "Cost of a default run".
 
 ## Decision flow (clarify what's unstated)
 
-1. **Mode**: compatibility, latency/throughput benchmark, or both?
+1. **Test types** (pick from the menu above; any subset, combinable): when
+   the user hasn't specified, present the menu and ask — don't default
+   silently.
    - compatibility: default `--api-format all`. A provider's compatibility
      result is the whole point — run all formats unless told otherwise.
    - benchmark: default `--api-format chat`. **Throughput is opt-in and
      expensive** — never run the `throughput` command unless the user asked
      for it. `latency` is cheap; offer it freely.
+   - cache/soak: `chat`/`messages` only (no `responses` in v1).
 2. **Providers**: discover `config.*.yaml` files in the repo root, show the
    user the list, and ask which to test. The user may also name configs
    directly. Config files hold real API keys — never print their contents.
@@ -44,6 +70,24 @@ is fine) rather than guessing — especially mode, providers, and benchmark load
 
 Build once, run many times: `make build` (or `go build -o llm-api-test
 ./cmd/llm-api-test`).
+
+### Cost of a default run
+
+Quote these before running anything on a metered proxy. Rough figures
+(English ≈ 4 chars/token); README "What each test measures & costs" has the
+full table and caveats.
+
+| Command | Default load | Est. tokens | Wall clock |
+|---|---|---|---|
+| `latency` | 10×5 = 50 short req | ~1k total | seconds |
+| `throughput` | 3×3 = 9 long req | ~40-60k **output** | ~3-5 min |
+| `cache` | 8-turn session | ~50k input, mostly cache-hit on warm turns | ~1-2 min |
+| `soak` | 1h: ~120 short + 12 long turns | ~10-15k total | 1h (the run time is the cost) |
+
+So the expensive things are `throughput` (≈ same output tokens as an hour of
+`soak`) and the hour `soak` ties up — never run either unprompted. Note some
+providers (DeepSeek v4) ignore generation caps: `throughput` output can
+exceed 4096 tokens/request and take minutes.
 
 ### Compatibility
 
@@ -102,6 +146,29 @@ the JSON report (text still goes to stdout).
   completed`); the report prints to stdout. Same for `compatibility`
   (`[compat] ... cases completed`) — a silent stderr means the run is
   genuinely stuck, not just slow.
+
+### Soak (long-duration stability)
+
+```bash
+./llm-api-test soak -c <config> --duration 1h --interval 30s   # chat + messages
+./llm-api-test soak -c <config> --duration 10m --interval 15s  # quick probe run
+./llm-api-test soak --idle-gaps ""                              # no idle probes
+```
+
+- Long-window gateway/proxy stability: one short streamed request per turn
+  (with idle-probe windows and a longer generation every `--long-every`
+  turns) and per-turn failure classification. Wall-clock heavy — a 1h soak is
+  ~120 turns of mostly waiting; token cost is trivial.
+- Failure classes: `conn`, `timeout`, `stall` (no data for `--stall`),
+  `dropped` (stream ended before its completion marker — chat: `[DONE]`/
+  `finish_reason`, messages: `message_stop`), `http-429`/`http-5xx`/
+  `http-4xx`, `other`. Failed turns do not abort the session.
+- Default `--idle-gaps 1m,5m,10m` pause traffic mid-run to expose proxies
+  that kill idle keep-alive connections; the first turn after each gap is
+  the probe result. Note net/http retries/heals most stale-connection reuse
+  silently, so a *visible* probe failure means the proxy truly broke.
+- Text report: class tallies, failure timeline, probe results, per-bucket
+  latency. Any failed turn → exit 1. `-o report.json` for charting.
 
 ### Reading results
 
