@@ -69,6 +69,41 @@ type CacheCase interface {
 	RunSession(ctx context.Context, model string, turns int, progress func(done int)) []CacheTurn
 }
 
+// SoakClass is the coarse outcome of one soak turn (design.md "soak").
+type SoakClass string
+
+const (
+	SoakOK      SoakClass = "ok"      // request completed, stream ended with its completion marker
+	SoakConn    SoakClass = "conn"    // transport-level failure (connection reset, refused, EOF)
+	SoakTimeout SoakClass = "timeout" // the per-turn budget expired
+	SoakStall   SoakClass = "stall"   // the stream produced no event for the stall window
+	SoakDropped SoakClass = "dropped" // stream ended before its completion marker (mid-stream cut)
+	SoakHTTP429 SoakClass = "http-429"
+	SoakHTTP5xx SoakClass = "http-5xx"
+	SoakHTTP4xx SoakClass = "http-4xx"
+	SoakOther   SoakClass = "other"
+)
+
+// SoakTurn is the observation from one soak turn.
+type SoakTurn struct {
+	Turn  int
+	Long  bool // used the long generation budget
+	Class SoakClass
+	Err   error // set when Class != SoakOK
+	Total time.Duration
+}
+
+// SoakCase is one format's soak turn: a short streamed request that must run
+// to its completion marker. Soak turns are independent (no history), so the
+// runner keeps going after a failed turn. Stall is the no-data watchdog
+// window; the turn must classify itself when it fires. long selects a larger
+// generation budget so the stream stays open longer.
+type SoakCase interface {
+	ID() string
+	Desc() string
+	RunTurn(ctx context.Context, model string, long bool, stall time.Duration) *SoakTurn
+}
+
 // Params carries run-wide settings into format construction.
 type Params struct {
 	Config *config.Config
@@ -84,4 +119,5 @@ type Format struct {
 	Cases     func(Params) []CompatCase // ordered: basic first
 	Benchmark func(Params) BenchmarkCase
 	Cache     func(Params) CacheCase // nil when the format has no cache test
+	Soak      func(Params) SoakCase  // nil when the format has no soak test
 }

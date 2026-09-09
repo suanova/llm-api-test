@@ -25,5 +25,10 @@ func Format() registry.Format {
 		Cache: func(p registry.Params) registry.CacheCase {
 			return &CacheCase{client: New(p.Config.BaseURL, p.Config.APIKey, p.Debug, false)} // always non-streamed
 		},
+		Soak: func(p registry.Params) registry.SoakCase {
+			client := New(p.Config.BaseURL, p.Config.APIKey, p.Debug, true) // always streamed
+			client.http = soakHTTPClient()                                  // keep idle conns for the probe gaps
+			return &SoakCase{client: client}
+		},
 	}
 }
