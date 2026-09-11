@@ -21,9 +21,9 @@ func (c *ThinkingCase) Desc() string {
 func (c *ThinkingCase) Run(ctx context.Context, model string) *registry.CompatResult {
 	req := &Request{
 		Model:     model,
-		MaxTokens: 1024,
+		MaxTokens: 4096,
 		Messages:  []Message{{Role: "user", Content: "Reply with exactly the word: pong"}},
-		Thinking:  &Thinking{Type: "enabled", BudgetTokens: 4096},
+		Thinking:  &Thinking{Type: "enabled", BudgetTokens: 1024},
 	}
 	res, err := c.client.Send(ctx, req)
 	if err != nil {
