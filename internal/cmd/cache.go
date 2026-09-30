@@ -16,21 +16,22 @@ var cacheTurns int
 
 // newCacheCmd builds the cache hit-rate test command (session-shaped).
 func newCacheCmd() *cobra.Command {
+	var apiFormat string
 	cmd := &cobra.Command{
 		Use:   "cache",
 		Short: "Run cache hit-rate tests (session-shaped)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runCache(cmd)
+			exitCode = runCache(cmd, apiFormat)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&apiFormat, "api-format", "all", "API format to test: all, chat, messages")
+	cmd.Flags().StringVar(&apiFormat, "api-format", "chat", "API format to test: all, chat, messages")
 	cmd.Flags().IntVar(&cacheTurns, "turns", 8, fmt.Sprintf("session turns (2-%d)", len(cases.CacheQuestions)))
 	return cmd
 }
 
 // runCache runs the cache session for the selected formats and models.
-func runCache(cmd *cobra.Command) int {
+func runCache(cmd *cobra.Command, apiFormat string) int {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 	if noStream {
@@ -47,7 +48,7 @@ func runCache(cmd *cobra.Command) int {
 		fmt.Fprintf(errOut, "config: %v\n", err)
 		return 2
 	}
-	formats, ok := resolveFormats(errOut)
+	formats, ok := resolveFormats(errOut, apiFormat)
 	if !ok {
 		return 2
 	}

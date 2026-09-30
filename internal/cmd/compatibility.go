@@ -16,12 +16,11 @@ import (
 	"llm-api-test/internal/runner"
 )
 
-var apiFormat string
-
 // formats is the composition root: every API format the CLI knows about.
 var formats = []registry.Format{chat.Format(), responses.Format(), messages.Format()}
 
 func newCompatibilityCmd() *cobra.Command {
+	var apiFormat string
 	cmd := &cobra.Command{
 		Use:   "compatibility [tests...]",
 		Short: "Run compatibility tests",
@@ -33,7 +32,7 @@ func newCompatibilityCmd() *cobra.Command {
 Use 'list' to see available tests.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runCompatibility(cmd, args)
+			exitCode = runCompatibility(cmd, args, apiFormat)
 			return nil
 		},
 	}
@@ -42,7 +41,7 @@ Use 'list' to see available tests.`,
 }
 
 // runCompatibility runs the selected tests and returns the exit code.
-func runCompatibility(cmd *cobra.Command, tests []string) int {
+func runCompatibility(cmd *cobra.Command, tests []string, apiFormat string) int {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 	cfg, err := loadConfig()
@@ -50,7 +49,7 @@ func runCompatibility(cmd *cobra.Command, tests []string) int {
 		fmt.Fprintf(errOut, "config: %v\n", err)
 		return 2
 	}
-	formats, ok := resolveFormats(errOut)
+	formats, ok := resolveFormats(errOut, apiFormat)
 	if !ok {
 		return 2
 	}
@@ -178,7 +177,7 @@ func dedupeCases(sel map[string][]registry.CompatCase) map[string][]registry.Com
 }
 
 // resolveFormats resolves --api-format to the format list.
-func resolveFormats(errOut io.Writer) ([]registry.Format, bool) {
+func resolveFormats(errOut io.Writer, apiFormat string) ([]registry.Format, bool) {
 	if apiFormat == "all" {
 		return formats, true
 	}

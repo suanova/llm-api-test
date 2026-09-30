@@ -22,6 +22,7 @@ var (
 
 // newSoakCmd builds the long-duration stream stability test command.
 func newSoakCmd() *cobra.Command {
+	var apiFormat string
 	cmd := &cobra.Command{
 		Use:   "soak",
 		Short: "Run long-duration stream stability tests",
@@ -30,11 +31,11 @@ func newSoakCmd() *cobra.Command {
 between turns (to expose proxy-side idle connection timeouts), and per-turn
 failure classification (stall, mid-stream cut, 5xx, 429, ...).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runSoak(cmd)
+			exitCode = runSoak(cmd, apiFormat)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&apiFormat, "api-format", "all", "API format to test: all, chat, messages")
+	cmd.Flags().StringVar(&apiFormat, "api-format", "chat", "API format to test: all, chat, messages")
 	cmd.Flags().DurationVar(&soakDuration, "duration", time.Hour, "total run duration")
 	cmd.Flags().DurationVar(&soakInterval, "interval", 30*time.Second, "time between turn starts")
 	cmd.Flags().DurationVar(&soakStall, "stall", time.Minute, "no-data window that marks a stream stalled")
@@ -44,7 +45,7 @@ failure classification (stall, mid-stream cut, 5xx, 429, ...).`,
 }
 
 // runSoak runs the soak session for the selected formats and models.
-func runSoak(cmd *cobra.Command) int {
+func runSoak(cmd *cobra.Command, apiFormat string) int {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 	if noStream {
@@ -78,7 +79,7 @@ func runSoak(cmd *cobra.Command) int {
 		fmt.Fprintf(errOut, "config: %v\n", err)
 		return 2
 	}
-	formats, ok := resolveFormats(errOut)
+	formats, ok := resolveFormats(errOut, apiFormat)
 	if !ok {
 		return 2
 	}
@@ -88,7 +89,8 @@ func runSoak(cmd *cobra.Command) int {
 	}
 
 	p := registry.Params{Config: cfg, Debug: debugWriter()} // Stream ignored: soak is always streamed
-	ctx, cancel := context.WithTimeout(context.Background(), soakTimeout())
+	ctx, cancel := context.WithTimeout(context.Background(),
+		soakTimeout(soakDuration, soakSessions(formats, len(cfg.Models))))
 	defer cancel()
 
 	opts := runner.SoakOpts{
@@ -139,10 +141,25 @@ func runSoak(cmd *cobra.Command) int {
 	return code
 }
 
-// soakTimeout bounds the whole run: the wall clock plus margin for the last
-// in-flight turn.
-func soakTimeout() time.Duration {
-	return soakDuration + 10*time.Minute
+// soakSessions counts the sessions a run holds: one per model for each
+// selected format that has a soak test (responses has none).
+func soakSessions(formats []registry.Format, models int) int {
+	n := 0
+	for _, f := range formats {
+		if f.Soak != nil {
+			n++
+		}
+	}
+	return n * models
+}
+
+// soakTimeout bounds the whole run: every session runs for the full duration,
+// plus margin for the last in-flight turn.
+func soakTimeout(duration time.Duration, sessions int) time.Duration {
+	if sessions < 1 {
+		sessions = 1
+	}
+	return time.Duration(sessions)*duration + 10*time.Minute
 }
 
 // parseSoakProbes parses the --idle-gaps spec into probe windows spread
