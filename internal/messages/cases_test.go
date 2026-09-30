@@ -120,8 +120,11 @@ func TestSystem(t *testing.T) {
 func TestThinking(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := decodeRequest(t, r)
-		if req.Thinking == nil || req.Thinking.Type != "enabled" || req.Thinking.BudgetTokens != 4096 {
-			t.Errorf("request thinking = %+v, want enabled/4096", req.Thinking)
+		if req.Thinking == nil || req.Thinking.Type != "enabled" || req.Thinking.BudgetTokens != 1024 {
+			t.Errorf("request thinking = %+v, want enabled/1024", req.Thinking)
+		}
+		if req.MaxTokens != 4096 {
+			t.Errorf("request max_tokens = %d, want 4096 (budget_tokens must stay below it)", req.MaxTokens)
 		}
 		msgStream(w, "pong")
 	}))
