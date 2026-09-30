@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -27,6 +28,10 @@ type streamEvent struct {
 	} `json:"item"`
 	Response *struct {
 		Usage *Usage `json:"usage"`
+		Error *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	} `json:"response"`
 }
 
@@ -114,6 +119,15 @@ func (c *Client) sendStream(ctx context.Context, req *Request) (*Result, error) 
 				res.Metrics.PromptTokens = e.Response.Usage.InputTokens
 				res.Metrics.CompletionTokens = e.Response.Usage.OutputTokens
 			}
+		case "response.failed":
+			// A failed generation is reported in-band under an HTTP 200, so it
+			// never trips the status check above. Surface it here rather than
+			// returning empty output as if the request had succeeded.
+			if e.Response != nil && e.Response.Error != nil {
+				return nil, fmt.Errorf("response failed: %s: %s",
+					e.Response.Error.Code, e.Response.Error.Message)
+			}
+			return nil, errors.New("response failed")
 		}
 	}
 

@@ -85,6 +85,31 @@ func TestBasicPlain(t *testing.T) {
 	}
 }
 
+// TestBasicStreamResponseFailed covers the streamed error path: the Responses
+// API reports a failed generation in-band as response.failed under an HTTP 200
+// status, with no output text at all. The case must surface the upstream
+// message instead of reporting an empty response.
+func TestBasicStreamResponseFailed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSSE(w,
+			`{"type":"response.created","response":{"status":"queued"}}`,
+			`{"type":"response.in_progress","response":{"status":"in_progress"}}`,
+			`{"type":"response.failed","response":{"status":"failed","error":{"code":"InvalidParameter","message":"<400> InternalError.Algo.InvalidParameter: Agent capabilities are not enabled for the current model."}}}`,
+			"[DONE]",
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	res := (&BasicCase{client: client}).Run(context.Background(), "m")
+	if res.Pass {
+		t.Fatal("expected fail for a streamed response.failed event")
+	}
+	if !strings.Contains(res.Detail, "Agent capabilities are not enabled") {
+		t.Errorf("detail = %q, want the upstream error message", res.Detail)
+	}
+}
+
 func TestInstructions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := decodeRequest(t, r)
