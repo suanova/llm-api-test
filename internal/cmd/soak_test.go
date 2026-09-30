@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"llm-api-test/internal/runner"
 )
@@ -42,7 +43,7 @@ func TestSoakRun(t *testing.T) {
 	defer server.Close()
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 
-	code, out := runRoot(t, "--config", cfg, "soak",
+	code, out := runRoot(t, "--config", cfg, "soak", "--api-format", "all",
 		"--duration", "300ms", "--interval", "100ms", "--stall", "80ms", "--idle-gaps", "")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
@@ -66,7 +67,7 @@ func TestSoakOutJSON(t *testing.T) {
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 	outPath := filepath.Join(t.TempDir(), "soak.json")
 
-	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "soak",
+	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "soak", "--api-format", "all",
 		"--duration", "300ms", "--interval", "100ms", "--stall", "80ms", "--idle-gaps", "")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -92,6 +93,47 @@ func TestSoakOutJSON(t *testing.T) {
 		if r.Model != "m1" || r.BaseURL == "" {
 			t.Errorf("report metadata missing: %+v", r)
 		}
+	}
+}
+
+// The soak command defaults to the chat format; messages is opt-in.
+func TestSoakDefaultsToChatFormat(t *testing.T) {
+	server := httptest.NewServer(soakMockHandler(0))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	code, out := runRoot(t, "--config", cfg, "soak",
+		"--duration", "300ms", "--interval", "100ms", "--stall", "80ms", "--idle-gaps", "")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "chat:soak") {
+		t.Errorf("default run missing chat:soak\noutput:\n%s", out)
+	}
+	if strings.Contains(out, "messages:soak") {
+		t.Errorf("default run must not include messages:soak\noutput:\n%s", out)
+	}
+}
+
+// A soak run holds one session per format that has a soak test, per model;
+// responses has none, so it contributes nothing.
+func TestSoakSessions(t *testing.T) {
+	if got, want := soakSessions(formats, 1), 2; got != want {
+		t.Errorf("soakSessions(all formats, 1 model) = %d, want %d (chat + messages)", got, want)
+	}
+	if got, want := soakSessions(formats, 2), 4; got != want {
+		t.Errorf("soakSessions(all formats, 2 models) = %d, want %d", got, want)
+	}
+}
+
+// Every session runs for the full duration, so the run's context must budget
+// for all of them: a second session must not be cut short.
+func TestSoakTimeoutCoversEverySession(t *testing.T) {
+	if got, want := soakTimeout(30*time.Minute, 2), time.Hour+10*time.Minute; got != want {
+		t.Errorf("soakTimeout(30m, 2 sessions) = %s, want %s", got, want)
+	}
+	if got, want := soakTimeout(30*time.Minute, 1), 40*time.Minute; got != want {
+		t.Errorf("soakTimeout(30m, 1 session) = %s, want %s", got, want)
 	}
 }
 

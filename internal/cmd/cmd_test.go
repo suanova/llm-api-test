@@ -441,7 +441,7 @@ func TestLatencyOutJSON(t *testing.T) {
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 	outPath := filepath.Join(t.TempDir(), "latency.json")
 
-	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "latency", "--iterations", "2", "--concurrency", "2")
+	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "latency", "--api-format", "all", "--iterations", "2", "--concurrency", "2")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
@@ -502,6 +502,47 @@ func TestThroughputDefaults(t *testing.T) {
 	}
 }
 
+// The benchmark commands default to the chat format: responses and messages
+// are opt-in, so a default run costs 1x, not 3x.
+func TestBenchmarkDefaultsToChatFormat(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	for _, mode := range []string{"latency", "throughput"} {
+		code, out := runRoot(t, "--config", cfg, mode, "--iterations", "1", "--concurrency", "1")
+		if code != 0 {
+			t.Fatalf("%s: exit code = %d, want 0\noutput:\n%s", mode, code, out)
+		}
+		if !strings.Contains(out, "chat:benchmark") {
+			t.Errorf("%s: default run missing chat:benchmark\noutput:\n%s", mode, out)
+		}
+		for _, other := range []string{"responses:benchmark", "messages:benchmark"} {
+			if strings.Contains(out, other) {
+				t.Errorf("%s: default run must not include %s\noutput:\n%s", mode, other, out)
+			}
+		}
+	}
+}
+
+// The cache command defaults to the chat format; messages is opt-in.
+func TestCacheDefaultsToChatFormat(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+
+	code, out := runRoot(t, "--config", cfg, "cache", "--turns", "3")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "chat:cache") {
+		t.Errorf("default run missing chat:cache\noutput:\n%s", out)
+	}
+	if strings.Contains(out, "messages:cache") {
+		t.Errorf("default run must not include messages:cache\noutput:\n%s", out)
+	}
+}
+
 func TestThroughputOutJSON(t *testing.T) {
 	server := httptest.NewServer(apiMockHandler(t))
 	defer server.Close()
@@ -541,7 +582,7 @@ func TestCacheRun(t *testing.T) {
 	defer server.Close()
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 
-	code, out := runRoot(t, "--config", cfg, "cache", "--turns", "3")
+	code, out := runRoot(t, "--config", cfg, "cache", "--api-format", "all", "--turns", "3")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
 	}
@@ -564,7 +605,7 @@ func TestCacheOutJSON(t *testing.T) {
 	cfg := writeConfig(t, t.TempDir(), server.URL)
 	outPath := filepath.Join(t.TempDir(), "cache.json")
 
-	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "cache", "--turns", "3")
+	code, _ := runRoot(t, "--config", cfg, "-o", outPath, "cache", "--api-format", "all", "--turns", "3")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}

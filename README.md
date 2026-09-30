@@ -1,51 +1,6 @@
 # llm-api-test
 
-A small Go CLI that tests LLM API compatibility and benchmarks latency/throughput
-against OpenAI-compatible and Anthropic-compatible endpoints. It speaks the raw
-HTTP wire format — no SDK — so it exercises what a compatible server actually
-accepts and returns.
-
-## What it tests
-
-Each API format has a set of compatibility cases with stable IDs
-(`<format>:<name>`). All requests are streamed by default (`--no-stream`
-disables streaming); "accepted" means the endpoint returns 2xx and a usable
-response.
-
-### Chat Completions (`--api-format chat`, `POST /v1/chat/completions`)
-
-| Case | Feature under test | Assertion |
-|---|---|---|
-| `chat:basic` | Chat Completions supported | returns an assistant message |
-| `chat:system-message` | system message | accepted and followed |
-| `chat:response_format` | `response_format` (`json_object`) | accepted and content is JSON |
-| `chat:seed` | `seed` param | accepted (2xx + output) |
-| `chat:tool-call` | custom function tools | emits `tool_calls` with parseable arguments |
-
-### Responses API (`--api-format responses`, `POST /responses`)
-
-| Case | Feature under test | Assertion |
-|---|---|---|
-| `responses:basic` | Responses API supported | returns output text |
-| `responses:instructions` | `instructions` param | accepted and followed |
-| `responses:reasoning` | `reasoning.effort` / `reasoning.summary` | accepted (2xx + output) |
-| `responses:text.format` | `text.format` (`json_schema`) | accepted and output is schema-conformant JSON |
-| `responses:text.verbosity` | `text.verbosity` param | accepted (2xx + output) |
-| `responses:prompt_cache_key` | `prompt_cache_key` param | accepted |
-| `responses:tool-call` | custom function tools | emits `function_call` output item with parseable args |
-
-### Anthropic Messages API (`--api-format messages`, `POST /v1/messages`)
-
-| Case | Feature under test | Assertion |
-|---|---|---|
-| `messages:basic` | Messages API supported | returns a text content block |
-| `messages:system` | top-level `system` param | accepted and followed |
-| `messages:thinking` | `thinking` (extended thinking) | accepted (2xx + output) |
-| `messages:cache_control` | `cache_control` on system blocks | accepted |
-| `messages:tool-use` | custom function tools | emits `tool_use` content block with parseable input |
-
-Tool cases use a custom `function` tool (`get_weather`) rather than built-in
-tools, so they work against any compatible endpoint.
+A small Go CLI that tests LLM API compatibility and benchmarks against OpenAI-compatible and Anthropic-compatible endpoints. It speaks the raw HTTP wire format — no SDK — so it exercises what a compatible server actually accepts and returns.
 
 ## What each test measures & costs
 
@@ -56,10 +11,17 @@ fields, echoed in the `-o report.json` output.
 
 | Test | Default load | Prompt | Gen cap | Est. tokens per run |
 |---|---|---|---|---|
+| `compatibility` | 17 cases × 1 request = 17 requests per model (5 chat / 7 responses / 5 messages); a format's remaining cases are skipped once its `basic` case fails | tiny prompts (`"Reply with exactly the word: pong"`, `"Say: hello"`, `"What is the weather in Shanghai?"`) | none for chat/responses (the provider's default); 1024 for messages, 4096 for `messages:thinking` (1024 of it a thinking budget) | ~1-2k total: most cases are a few dozen tokens, `responses:reasoning` (effort `high`, uncapped) and `messages:thinking` dominate. Seconds to ~a minute; the whole run is capped at 10 minutes |
 | `latency` | 10 iters × 5 concurrency = 50 requests | `"Reply with exactly the word: pong"` | 4096 (unused: the model just replies "pong") | ~1k total; finishes in seconds |
 | `throughput` | 3 iters × 3 concurrency = 9 requests | ~3000-word article task (short instruction, long generation) | 4096 \* | ~40-60k output; ~3-5 min |
 | `cache` | 1 session, 8 turns, history grows each turn | ~2k-token system prompt + 170-line knowledge base + 6 tool schemas, then one question per turn | 300 per turn | ~50k input per session (~90% served from cache on warm turns, billed at the provider's cache-read rate), ~2.4k output max |
 | `soak` | 1 hour: ~120 short turns + 12 long turns (`--long-every 10`) | short: `"Reply with exactly the word: ok"`; long: ~400-500-word writing task | 64 / 512 | ~10-15k total; the cost is an hour of run time, not tokens |
+
+The rows are per default run: `chat` only, except for `compatibility`, which
+defaults to all three formats. `--api-format all` widens a benchmark command
+to 3 formats and a `cache`/`soak` run to 2 (each format is its own request
+set or session, run in sequence), so multiply accordingly — and every model
+in the config multiplies again.
 
 \* Generation caps are best-effort: some providers (e.g. DeepSeek v4) ignore
 them, so a thorough prompt can run longer and output more than the cap — the
@@ -68,6 +30,10 @@ long-turn budget.
 
 What each test is for:
 
+- **`compatibility`** — whether the endpoint implements each format's feature
+  surface (params accepted, response shape as specified), as pass/fail rather
+  than numbers. One short request per case, so it is the cheap test; run it
+  first to find out which formats are worth benchmarking at all.
 - **`latency`** — per-request round-trip and time-to-first-token under light
   load. Cheap enough to run repeatedly; use it to compare endpoints
   (TTFB/TTFT/Total percentiles).
@@ -86,8 +52,7 @@ What each test is for:
 ## Install / build
 
 ```bash
-go build -o llm-api-test ./cmd/llm-api-test
-# or: make build
+go build -o llm-api-test ./cmd/llm-api-test # or: make build
 ```
 
 ## Configure
@@ -139,6 +104,42 @@ Common flags (all subcommands):
 
 ### Compatibility
 
+Each API format has a set of compatibility cases with stable IDs (`<format>:<name>`). All requests are streamed by default (`--no-stream` disables streaming); "accepted" means the endpoint returns 2xx and a usable response.
+
+#### Chat Completions (`--api-format chat`, `POST /v1/chat/completions`)
+
+| Case | Feature under test | Assertion |
+|---|---|---|
+| `chat:basic` | Chat Completions supported | returns an assistant message |
+| `chat:system-message` | system message | accepted and followed |
+| `chat:response_format` | `response_format` (`json_object`) | accepted and content is JSON |
+| `chat:seed` | `seed` param | accepted (2xx + output) |
+| `chat:tool-call` | custom function tools | emits `tool_calls` with parseable arguments |
+
+#### Responses API (`--api-format responses`, `POST /responses`)
+
+| Case | Feature under test | Assertion |
+|---|---|---|
+| `responses:basic` | Responses API supported | returns output text |
+| `responses:instructions` | `instructions` param | accepted and followed |
+| `responses:reasoning` | `reasoning.effort` / `reasoning.summary` | accepted (2xx + output) |
+| `responses:text.format` | `text.format` (`json_schema`) | accepted and output is schema-conformant JSON |
+| `responses:text.verbosity` | `text.verbosity` param | accepted (2xx + output) |
+| `responses:prompt_cache_key` | `prompt_cache_key` param | accepted |
+| `responses:tool-call` | custom function tools | emits `function_call` output item with parseable args |
+
+#### Anthropic Messages API (`--api-format messages`, `POST /v1/messages`)
+
+| Case | Feature under test | Assertion |
+|---|---|---|
+| `messages:basic` | Messages API supported | returns a text content block |
+| `messages:system` | top-level `system` param | accepted and followed |
+| `messages:thinking` | `thinking` (extended thinking) | accepted (2xx + output) |
+| `messages:cache_control` | `cache_control` on system blocks | accepted |
+| `messages:tool-use` | custom function tools | emits `tool_use` content block with parseable input |
+
+Tool cases use a custom `function` tool (`get_weather`) rather than built-in tools, so they work against any compatible endpoint.
+
 ```bash
 # all cases across all API formats (default --api-format all)
 ./llm-api-test compatibility
@@ -154,6 +155,27 @@ Common flags (all subcommands):
 # list available tests, grouped by API format
 ./llm-api-test list
 ./llm-api-test list --api-format chat
+```
+
+#### Output
+
+Compatibility output is grouped by API format, with a header showing the endpoint and model:
+
+```
+base_url: https://api.openai.com/v1  model: gpt-4o-mini
+OpenAI Chat Completions (POST /v1/chat/completions) Compatibility
+
+  chat:basic              PASS  assistant message present
+  chat:system-message     PASS  system message followed
+  chat:response_format    PASS  JSON response
+  chat:seed               PASS  seed accepted
+  chat:tool-call          PASS  tool_calls returned
+```
+
+Failures print the reason instead of the pass detail:
+
+```
+  chat:response_format    FAIL  request failed: HTTP 400: {"error":...}
 ```
 
 ### Benchmarks
@@ -173,100 +195,19 @@ The `latency` and `throughput` commands run `iterations` waves of
 ./llm-api-test throughput --api-format chat --iterations 10 --concurrency 5
 ```
 
-`latency` reports TTFB/TTFT/Total; `throughput` additionally reports
-TPOT, TPS, and token counts. With `--no-stream`, TTFB/TTFT/TPOT are omitted
-(they require streaming) and `throughput` falls back to tokens/s from usage.
-Benchmark requests cap generation at 4096 tokens (`max_completion_tokens` for
-chat, `max_output_tokens` for responses, `max_tokens` for messages) so a
-thorough prompt cannot run unbounded; the benchmark context timeout (120s per
-request, minimum 10 minutes) is the backstop. While a benchmark runs, a live
-status line is printed to stderr (`[benchmark] elapsed 5s, 3/10 requests
-completed`) and cleared when the report prints.
+Both default to `--api-format chat` and run one format per invocation: the
+formats are separate endpoints (often separate translation paths on a proxy),
+so each one you add multiplies the run rather than refining a single number.
+`--api-format all` adds responses and messages, at 3x the requests.
 
-### Cache hit rate
+- `latency` reports TTFB/TTFT/Total;
+- `throughput` additionally reports TPOT, TPS, and token counts.
 
-The `cache` command runs a session-shaped cache hit-rate test: a stable
-prefix (system prompt + tool definitions) plus a conversation history that
-grows one turn at a time, mirroring how agent clients (Claude Code, Codex)
-actually use prompt caching.
+With `--no-stream`, TTFB/TTFT/TPOT are omitted (they require streaming) and `throughput` falls back to tokens/s from usage.
 
-```bash
-./llm-api-test cache                        # chat + messages
-./llm-api-test cache --api-format messages
-./llm-api-test cache --turns 5              # shorter session
-```
+Benchmark requests cap generation at 4096 tokens (`max_completion_tokens` for chat, `max_output_tokens` for responses, `max_tokens` for messages) so a thorough prompt cannot run unbounded; the benchmark context timeout (120s per request, minimum 10 minutes) is the backstop. While a benchmark runs, a live status line is printed to stderr (`[benchmark] elapsed 5s, 3/10 requests completed`) and cleared when the report prints.
 
-Cache sessions are always non-streamed. The report shows per-turn
-cached/written tokens, session and warm-turn hit rates, and a verdict:
-`cache observed`, `no cache observed`, or `inconclusive`.
-
-### Soak (long-duration stability)
-
-The `soak` command keeps sending streamed requests over a long stretch of
-real time (default 1 hour) and classifies every failure, to surface gateway
-and proxy stability problems that short runs miss: mid-stream cuts, silent
-stalls, sustained-load 5xx/429s, and latency drift.
-
-```bash
-# chat + messages, 1 hour, one turn every 30s
-./llm-api-test soak -c config.astraflow.yaml
-
-# shorter probe run: 10 minutes, faster cadence
-./llm-api-test soak -c config.astraflow.yaml --duration 10m --interval 15s
-
-# continuous interaction only (no idle probes)
-./llm-api-test soak --idle-gaps ""
-```
-
-- Turns are independent short streamed requests (a long-generation turn runs
-  every 10th by default via `--long-every`). A failed turn does not abort the
-  session — the next turn shows whether the failure was transient.
-- **Idle probes** (default `--idle-gaps 1m,5m,10m`, spread evenly across the
-  run) pause traffic for the given stretches, then report the first turn
-  after the gap. A proxy that kills idle keep-alive connections shows up as a
-  failure or latency spike on resume. The soak client holds idle connections
-  for hours so the default 90s client-side reap does not mask the proxy's own
-  timeout.
-- **Stall watchdog**: a stream that produces no event for `--stall` (default
-  60s) is torn down and reported as `stall`.
-- Every failure is classified: `conn` (connection reset/refused),
-  `timeout`, `stall`, `dropped` (stream ended before its completion marker),
-  `http-429`, `http-5xx`, `http-4xx`, `other`. The report shows per-class
-  tallies, a failure timeline with timestamps, idle-probe results, and
-  latency per time bucket (drift detection).
-
-Report and exit-code conventions match the other commands: `-o report.json`
-writes JSON (one object per model/format), and any failed turn exits `1`.
-
-### Exit codes
-
-- `0` — all cases passed
-- `1` — one or more cases failed
-- `2` — config or argument error
-
-## Output
-
-Compatibility output is grouped by API format, with a header showing the
-endpoint and model:
-
-```
-base_url: https://api.openai.com/v1  model: gpt-4o-mini
-OpenAI Chat Completions (POST /v1/chat/completions) Compatibility
-
-  chat:basic              PASS  assistant message present
-  chat:system-message     PASS  system message followed
-  chat:response_format    PASS  JSON response
-  chat:seed               PASS  seed accepted
-  chat:tool-call          PASS  tool_calls returned
-```
-
-Failures print the reason instead of the pass detail:
-
-```
-  chat:response_format    FAIL  request failed: HTTP 400: {"error":...}
-```
-
-### Benchmark output
+#### Output
 
 Latency mode:
 
@@ -299,8 +240,66 @@ Throughput mode adds TPOT/TPS/Tokens/Output:
     Elapsed: 15.2s
 ```
 
-`-o report.json` writes machine-readable JSON reports (one object per
-model/format run); see `docs/design.md` for the schema.
+`-o report.json` writes machine-readable JSON reports (one object per model/format run); see `docs/design.md` for the schema.
+
+### Cache hit rate
+
+The `cache` command runs a session-shaped cache hit-rate test: a stable
+prefix (system prompt + tool definitions) plus a conversation history that
+grows one turn at a time, mirroring how agent clients (Claude Code, Codex)
+actually use prompt caching.
+
+```bash
+./llm-api-test cache                        # chat (default)
+./llm-api-test cache --api-format messages  # Anthropic-style cache_control
+./llm-api-test cache --api-format all       # both sessions
+./llm-api-test cache --turns 5              # shorter session
+```
+
+Cache sessions are always non-streamed. The report shows per-turn
+cached/written tokens, session and warm-turn hit rates, and a verdict:
+`cache observed`, `no cache observed`, or `inconclusive`.
+
+### Soak (long-duration stability)
+
+The `soak` command keeps sending streamed requests over a long stretch of
+real time (default 1 hour) and classifies every failure, to surface gateway
+and proxy stability problems that short runs miss: mid-stream cuts, silent
+stalls, sustained-load 5xx/429s, and latency drift.
+
+```bash
+# one hour, one turn every 30s (chat by default)
+./llm-api-test soak -c config.astraflow.yaml
+
+# the Anthropic-style path (own session, so its own hour)
+./llm-api-test soak -c config.astraflow.yaml --api-format messages
+
+# shorter probe run: 10 minutes, faster cadence
+./llm-api-test soak -c config.astraflow.yaml --duration 10m --interval 15s
+
+# continuous interaction only (no idle probes)
+./llm-api-test soak --idle-gaps ""
+```
+
+- Turns are independent short streamed requests (a long-generation turn runs
+  every 10th by default via `--long-every`). A failed turn does not abort the
+  session — the next turn shows whether the failure was transient.
+- **Idle probes** (default `--idle-gaps 1m,5m,10m`, spread evenly across the
+  run) pause traffic for the given stretches, then report the first turn
+  after the gap. A proxy that kills idle keep-alive connections shows up as a
+  failure or latency spike on resume. The soak client holds idle connections
+  for hours so the default 90s client-side reap does not mask the proxy's own
+  timeout.
+- **Stall watchdog**: a stream that produces no event for `--stall` (default
+  60s) is torn down and reported as `stall`.
+- Every failure is classified: `conn` (connection reset/refused),
+  `timeout`, `stall`, `dropped` (stream ended before its completion marker),
+  `http-429`, `http-5xx`, `http-4xx`, `other`. The report shows per-class
+  tallies, a failure timeline with timestamps, idle-probe results, and
+  latency per time bucket (drift detection).
+
+Report and exit-code conventions match the other commands: `-o report.json`
+writes JSON (one object per model/format), and any failed turn exits `1`.
 
 ## Project layout
 

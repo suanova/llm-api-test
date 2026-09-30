@@ -112,13 +112,18 @@ differ only in the prompt and which indicators are reported.
 Flags (both commands; defaults differ — latency 5x10, throughput 3x3):
 
 ```
-      --api-format string   API format to test: all, chat, responses, messages (default "all")
+      --api-format string   API format to test: all, chat, responses, messages (default "chat")
       --concurrency int     concurrent requests per iteration (default 5 / 3)
       --iterations int      iterations per benchmark case (default 10 / 3)
 ```
 
 Throughput defaults to 3x3 because each request is expensive (long prompt,
 ~1 min each); latency requests are cheap so it defaults to 5x10.
+
+Both default to `--api-format chat` and run one format per invocation: the
+formats are separate endpoints (and often separate translation paths on a
+proxy), so their numbers multiply the cost rather than refining one another.
+`--api-format all` covers the other two at 3x the requests.
 
 `latency` uses the short pong prompt and reports TTFB/TTFT/Total;
 `throughput` uses the long article prompt and additionally reports
@@ -440,14 +445,16 @@ usage of every turn.
 Flags:
 
 ```
-      --api-format string   API format to test: all, chat, messages (default "all")
+      --api-format string   API format to test: all, chat, messages (default "chat")
       --turns int           session turns (default 8)
 ```
 
 - v1 formats: `chat` (automatic prefix cache, Codex-style) and `messages`
   (explicit `cache_control` breakpoints, Claude Code-style). `responses` is
   excluded — its cache surface is the DeepSeek-specific `prompt_cache_key`,
-  lowest value.
+  lowest value. The two mechanisms are not comparable, so only `chat` runs by
+  default; pass `--api-format messages` (or `all` for both) to measure the
+  other one.
 - Always non-streamed: cache fields only appear in the final non-streamed
   usage; caching semantics are independent of streaming. `--no-stream` does
   not apply.
@@ -629,6 +636,10 @@ llm-api-test soak --api-format chat|messages|all --duration 1h \
     --interval 30s --stall 1m --long-every 10 --idle-gaps 1m,5m,10m
 ```
 
+`--api-format` defaults to `chat`; each selected format holds its own session
+for the full `--duration`, so `all` (chat + messages) runs two of them in
+sequence. The run's context budgets for every session it will hold
+(`duration × formats-with-soak × models`) so no session is cut short.
 `--idle-gaps` is a comma-separated list; windows are spread evenly (n gaps
 start at `duration*(i+1)/(n+1)`), must fit inside the run, and must not
 overlap. Empty disables probes. `--no-stream` is rejected (always streamed).

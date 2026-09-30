@@ -15,30 +15,32 @@ import (
 // newLatencyCmd builds the latency benchmark command (short pong prompt).
 func newLatencyCmd() *cobra.Command {
 	iterations, concurrency := 10, 5
+	var apiFormat string
 	cmd := &cobra.Command{
 		Use:   "latency",
 		Short: "Run latency benchmarks (short pong prompt)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runBenchmark(cmd, "latency", iterations, concurrency)
+			exitCode = runBenchmark(cmd, "latency", apiFormat, iterations, concurrency)
 			return nil
 		},
 	}
-	addBenchmarkFlags(cmd, &concurrency, &iterations)
+	addBenchmarkFlags(cmd, &apiFormat, &concurrency, &iterations)
 	return cmd
 }
 
 // newThroughputCmd builds the throughput benchmark command (long prompt).
 func newThroughputCmd() *cobra.Command {
 	iterations, concurrency := 3, 3
+	var apiFormat string
 	cmd := &cobra.Command{
 		Use:   "throughput",
 		Short: "Run throughput benchmarks (long prompt)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runBenchmark(cmd, "throughput", iterations, concurrency)
+			exitCode = runBenchmark(cmd, "throughput", apiFormat, iterations, concurrency)
 			return nil
 		},
 	}
-	addBenchmarkFlags(cmd, &concurrency, &iterations)
+	addBenchmarkFlags(cmd, &apiFormat, &concurrency, &iterations)
 	return cmd
 }
 
@@ -47,14 +49,14 @@ func newThroughputCmd() *cobra.Command {
 // latency defaults to 5x10. Each command binds its own variables so the
 // defaults cannot clobber each other (pflag writes through the bound
 // pointer, so shared variables would keep the last registered default).
-func addBenchmarkFlags(cmd *cobra.Command, concurrency, iterations *int) {
-	cmd.Flags().StringVar(&apiFormat, "api-format", "all", "API format to test: all, chat, responses, messages")
+func addBenchmarkFlags(cmd *cobra.Command, apiFormat *string, concurrency, iterations *int) {
+	cmd.Flags().StringVar(apiFormat, "api-format", "chat", "API format to test: all, chat, responses, messages")
 	cmd.Flags().IntVar(concurrency, "concurrency", *concurrency, "concurrent requests per iteration")
 	cmd.Flags().IntVar(iterations, "iterations", *iterations, "iterations per benchmark case")
 }
 
 // runBenchmark runs the benchmark for the given mode and returns the exit code.
-func runBenchmark(cmd *cobra.Command, mode string, iterations, concurrency int) int {
+func runBenchmark(cmd *cobra.Command, mode, apiFormat string, iterations, concurrency int) int {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 	cfg, err := loadConfig()
@@ -62,7 +64,7 @@ func runBenchmark(cmd *cobra.Command, mode string, iterations, concurrency int) 
 		fmt.Fprintf(errOut, "config: %v\n", err)
 		return 2
 	}
-	formats, ok := resolveFormats(errOut)
+	formats, ok := resolveFormats(errOut, apiFormat)
 	if !ok {
 		return 2
 	}

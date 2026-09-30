@@ -10,11 +10,12 @@ import (
 )
 
 func newListCmd() *cobra.Command {
+	var apiFormat string
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List available compatibility tests, grouped by API format",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitCode = runList(cmd)
+			exitCode = runList(cmd, apiFormat)
 			return nil
 		},
 	}
@@ -23,10 +24,10 @@ func newListCmd() *cobra.Command {
 }
 
 // runList prints the available tests and returns the exit code.
-func runList(cmd *cobra.Command) int {
+func runList(cmd *cobra.Command, apiFormat string) int {
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
-	formats, ok := resolveFormats(errOut)
+	formats, ok := resolveFormats(errOut, apiFormat)
 	if !ok {
 		return 2
 	}
