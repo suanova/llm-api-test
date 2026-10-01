@@ -1,0 +1,481 @@
+<!doctype html>
+<!--
+  Compatibility report template — the canonical HTML page for `llm-api-test compatibility`.
+
+  HOW TO USE
+    1. Copy this file to reports/compat-YYMMDD-<desc>.html.
+    2. Replace every <PLACEHOLDER> below with the run's real values.
+    3. Fill REPORT with the run's data (see the schema comment above `const REPORT`).
+    4. Write the prose in the two marked sections — "What the sweep found" and
+       "Recommendation". Those are free-form; everything above them is rendered.
+    5. Delete this comment block and the PLACEHOLDER banner.
+
+  DO NOT restyle. The tokens and components below are shared by every compatibility
+  report; changing them here changes them everywhere. A run that needs a new visual
+  state adds it here, once, so all reports gain it together.
+
+  The page is self-contained (no external CSS, JS, fonts or images) and opens directly
+  from file://. Keep the <meta charset="utf-8"> first in <head>: without it, pages
+  opened from disk have no declared encoding and non-ASCII text renders as mojibake.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title><PLACEHOLDER: Provider> compatibility report</title>
+<style>
+  /* ---------- tokens: light ---------- */
+  :root {
+    --ground:   #F4F5F7;
+    --surface:  #FFFFFF;
+    --surface-2:#FAFBFC;
+    --ink:      #18222E;
+    --muted:    #5C6A78;
+    --faint:    #8A97A5;
+    --line:     #D9DFE6;
+    --line-soft:#E8ECF0;
+    --accent:   #3A7CB8;
+    --accent-soft:#E7F0F8;
+    --pass:     #2E8B5B;
+    --fail:     #C03A33;
+    --warn:     #B07C1E;
+    --blocked:  #9AA7B4;
+    /* glyph ink, chosen per state colour so the mark stays legible.
+       --gi-block is dark ink on the grey fill: the gated cell is the one state that
+       reads as absent, and a dark mark on grey says "empty" rather than "another
+       status". Contrast: glyph 6.6:1 on fill, fill 2.5:1 against the white card. */
+    --gi-pass:  #FFFFFF;
+    --gi-fail:  #FFFFFF;
+    --gi-warn:  #FFFFFF;
+    --gi-block: #18222E;
+    --shadow: 0 1px 2px rgba(24,34,46,.06), 0 4px 14px rgba(24,34,46,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0F141B; --surface:#161D26; --surface-2:#1B232D; --ink:#E7ECF2;
+      --muted:#A3B0BE; --faint:#74828F; --line:#27313D; --line-soft:#1F2731;
+      --accent:#5E9DD4; --accent-soft:#16242F;
+      --pass:#4FA47E; --fail:#C0503F; --warn:#D0A050; --blocked:#4A5766;
+      --gi-pass:#0E1F17; --gi-fail:#FFFFFF; --gi-warn:#241C08; --gi-block:#FFFFFF;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0F141B; --surface:#161D26; --surface-2:#1B232D; --ink:#E7ECF2;
+    --muted:#A3B0BE; --faint:#74828F; --line:#27313D; --line-soft:#1F2731;
+    --accent:#5E9DD4; --accent-soft:#16242F;
+    --pass:#4FA47E; --fail:#C0503F; --warn:#D0A050; --blocked:#4A5766;
+    --gi-pass:#0E1F17; --gi-fail:#FFFFFF; --gi-warn:#241C08; --gi-block:#FFFFFF;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 400 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 40px 24px 72px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; justify-content: space-between; }
+  .eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 8px; }
+  h1 { font-size: 30px; line-height: 1.2; font-weight: 600; margin: 0 0 12px; text-wrap: balance; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0; max-width: 64ch; }
+  #theme { font: 500 12px/1 ui-monospace, monospace; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+  #theme:hover { color: var(--ink); border-color: var(--faint); }
+  #theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .end { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 10px; padding: 15px 18px; box-shadow: var(--shadow); margin: 28px 0 0; }
+  .end dt { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 6px; }
+  .end dd { margin: 0; font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--ink); word-break: break-all; }
+
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 30px 0 0; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .tile .n { font-size: 40px; line-height: 1; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .tile .n small { font-size: 20px; color: var(--muted); font-weight: 700; }
+  .tile .k { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin: 9px 0 0; }
+  .tile .d { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+  .t-pass { border-top: 3px solid var(--pass); } .t-pass .n { color: var(--pass); }
+  .t-fail { border-top: 3px solid var(--fail); } .t-fail .n { color: var(--fail); }
+  .t-warn { border-top: 3px solid var(--warn); } .t-warn .n { color: var(--warn); }
+  .t-block{ border-top: 3px solid var(--blocked); }
+
+  .bars { display: flex; flex-direction: column; gap: 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .bar-row { display: grid; grid-template-columns: 178px 1fr 74px; gap: 12px; align-items: center; }
+  .bar-label { font-size: 11.5px; font-weight: 500; font-family: ui-monospace, monospace; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { display: flex; gap: 2px; height: 18px; }
+  .seg { display: flex; align-items: center; justify-content: center; font: 600 10px/1 ui-monospace, monospace; border-radius: 3px; min-width: 0; }
+  .seg-P { background: var(--pass);    color: var(--gi-pass); }
+  .seg-F { background: var(--fail);    color: var(--gi-fail); }
+  .seg-U { background: var(--warn);    color: var(--gi-warn); }
+  .seg-N { background: var(--blocked); color: var(--gi-block); }
+  .bar-val { font-size: 12px; color: var(--muted); text-align: right; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0 0; font-size: 12px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 13px; height: 13px; border-radius: 3px; flex: none; }
+  .swatch.glyph { text-align: center; font: 600 11px/13px ui-monospace, monospace; }
+
+  section { margin-top: 54px; }
+  h2 { font-size: 13px; letter-spacing: .11em; text-transform: uppercase; font-weight: 600; color: var(--faint); margin: 0 0 20px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 20px; }
+  li { margin-bottom: 7px; }
+  .note { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  /* ---------- matrix ---------- */
+  .matrix-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+  table.matrix { border-collapse: separate; border-spacing: 0; font-size: 12px; width: 100%; }
+  table.matrix th, table.matrix td { padding: 0; }
+  thead th.band { height: 26px; font-family: ui-monospace, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); background: var(--surface-2); border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); text-align: center; }
+  thead th.corner { background: var(--surface); border-right: 1px solid var(--line); }
+  thead .col th { height: 92px; vertical-align: bottom; padding-bottom: 8px; font-family: ui-monospace, monospace; font-size: 10.5px; font-weight: 400; color: var(--faint); background: var(--surface-2); border-bottom: 1px solid var(--line); }
+  thead .col th span { display: block; writing-mode: vertical-rl; transform: rotate(180deg); margin: 0 auto; white-space: nowrap; }
+  tbody td { height: 28px; text-align: center; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody td.band-end { border-right: 1px solid var(--line); }
+  .mname { text-align: left; padding: 0 14px; font-family: ui-monospace, monospace; font-size: 12px; font-weight: 500; color: var(--ink); white-space: nowrap; background: var(--surface); position: sticky; left: 0; z-index: 1; border-right: 1px solid var(--line); }
+  .cell { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font: 600 11px/1 ui-monospace, monospace; }
+  .c-P { background: var(--pass);    color: var(--gi-pass); }
+  .c-F { background: var(--fail);    color: var(--gi-fail); }
+  .c-U { background: var(--warn);    color: var(--gi-warn); }
+  .c-N { background: var(--blocked); color: var(--gi-block); }
+  tbody tr:hover .mname { background: var(--accent-soft); }
+  tbody tr:hover td { background: var(--surface-2); }
+
+  /* ---------- cards / data ---------- */
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin-bottom: 16px; box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 10px; font-size: 16px; font-weight: 600; display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+  .tag { font-family: ui-monospace, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .t-ok    { color: var(--pass); }
+  .t-bad   { color: var(--fail); }
+  .t-warn  { color: var(--warn); }
+  .t-ours  { color: var(--accent); }
+  pre { background: var(--surface-2); border: 1px solid var(--line-soft); border-left: 3px solid var(--warn); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 12px 0; font: 400 12.5px/1.55 ui-monospace, monospace; color: var(--ink); }
+  pre.err { border-left-color: var(--fail); }
+  pre.ok { border-left-color: var(--pass); }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  table.data th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 600; padding: 11px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+  table.data td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  table.data tr:last-child td { border-bottom: 0; }
+  table.data td.num { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .table-scroll { overflow-x: auto; }
+  .rec { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 22px 24px; }
+  .rec h4 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+  .rec > div + div { margin-top: 18px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media (max-width: 560px) {
+    .bar-row { grid-template-columns: 118px 1fr 64px; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p style="background:#C03A33;color:#fff;padding:10px 14px;border-radius:8px;font:600 13px/1.4 ui-monospace,monospace;margin:0 0 28px">
+    PLACEHOLDER TEMPLATE — replace every &lt;PLACEHOLDER&gt; and fill REPORT, then delete this banner.
+  </p>
+
+  <header>
+    <div>
+      <p class="eyebrow" id="eyebrow"></p>
+      <h1 id="title"></h1>
+      <p class="sub" id="sub"></p>
+    </div>
+    <button id="theme" type="button">theme: auto</button>
+  </header>
+
+  <dl class="end">
+    <dt>Endpoint</dt>
+    <dd id="endpoint"></dd>
+  </dl>
+
+  <div class="verdict" id="tiles"></div>
+
+  <section id="bars-section">
+    <h2 id="bars-title">Models ranked by cases passed</h2>
+    <div class="bars" id="bars"></div>
+    <div class="legend" id="bars-legend"></div>
+    <p class="note" id="bars-note" hidden></p>
+  </section>
+
+  <section>
+    <h2 id="matrix-title"></h2>
+    <div class="matrix-scroll" id="matrix"></div>
+    <div class="legend" id="matrix-legend"></div>
+  </section>
+
+  <section>
+    <h2>What the sweep found</h2>
+
+    <!-- FINDINGS — free-form. One <div class="card"> per finding. Colour the
+         <span class="tag"> by whose problem it is: t-ok pass/good news,
+         t-bad incompatibility, t-warn provider-side gap, t-ours our tool's defect.
+         Use <pre class="err"> and <pre class="ok"> for quoted raw output.
+         Do not number the headings (①, "1.", …) — the title carries the finding.
+         If one finding refers to another, name it ("the prompt fix above"), since
+         there are no numbers to cite. -->
+
+    <div class="card">
+      <h3>&lt;PLACEHOLDER finding headline&gt; <span class="tag t-ok">&lt;tag&gt;</span></h3>
+      <p>&lt;PLACEHOLDER prose.&gt;</p>
+    </div>
+
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <div class="rec">
+
+      <!-- RECOMMENDATION — free-form. One <div> per item, each with an <h4>. -->
+
+      <div>
+        <h4>&lt;PLACEHOLDER recommendation&gt;</h4>
+        <p>&lt;PLACEHOLDER prose.&gt;</p>
+      </div>
+
+    </div>
+  </section>
+
+  <p class="sub" id="footnote"></p>
+</div>
+
+<script>
+/*
+  REPORT — the single source of every number on this page.
+
+  The renderer below derives the tiles, the ranked bars, the matrix, both legends
+  and all counts from this object, so a figure can never disagree with the cell it
+  came from. It throws (and the page stays blank) if the data is malformed, which
+  is deliberate: a broken report should look broken, not plausible.
+
+  {
+    meta:     eyebrow line, e.g. "Compatibility sweep · 13 models · 17 cases · 221 runs"
+    title:    <h1>
+    sub:      standfirst paragraph (may contain HTML)
+    endpoint: <dd> under the Endpoint label
+    surfaces: ordered API surfaces, each with its ordered case names. Must match
+              `./llm-api-test list` for the formats actually run — a run with
+              --api-format chat has one surface and 5 cases, not three.
+    models:   one row per model, in the order they should appear in the MATRIX.
+                m    model name, exactly as the config routes it
+                s    one character per case, in surfaces/cases order:
+                       P  pass
+                       F  incompatibility — failed, and not a timeout/transport error
+                       U  did not complete — timeout or transport error. NOT a
+                          capability verdict; the cell tooltip must say what
+                          evidence exists (re-verified, or none)
+                       N  not run — gated behind a failed `basic` case
+                     Whitespace is ignored, so group the characters per surface.
+              Bar order is derived (most passes first); the matrix keeps this order.
+    evidence: per-cell tooltip overrides, keyed "model|surface:case". Use for any
+              cell whose story is not the one-line default — every U cell should
+              have one, saying which re-run backs it.
+    tiles:    4 tiles in the published reports' fixed grammar.
+                k     pass | fail | warn | block  (colour)
+                from  optional: P | F | U | N | cleanModels — takes its number from
+                      the data, which is how a count that must agree with the matrix
+                      stays in agreement. Prefer it over a hand-typed number.
+                n, of when there is no single count to derive from (e.g. "333" of
+                      "/340" that folds in re-runs), give the literal and explain
+                      the arithmetic in `d`.
+                label uppercase caption, d detail line (may contain HTML)
+    barsNote: optional note under the bar legend
+    footnote: closing caveat paragraph (may contain HTML)
+  }
+*/
+
+const REPORT = {
+  meta:  "<PLACEHOLDER eyebrow — e.g. Compatibility sweep · N models · M cases · R runs>",
+  title: "<PLACEHOLDER — Provider> routes on <PLACEHOLDER — gateway>",
+  sub:   "<PLACEHOLDER standfirst: what was run, against what, and anything that colours the numbers.>",
+  endpoint: "<PLACEHOLDER — host/path and which surfaces it serves>",
+
+  surfaces: [
+    { name: "chat",      cases: ["basic", "system-message", "response_format", "seed", "tool-call"] },
+    { name: "responses", cases: ["basic", "instructions", "reasoning", "text.format", "text.verbosity", "prompt_cache_key", "tool-call"] },
+    { name: "messages",  cases: ["basic", "system", "thinking", "cache_control", "tool-use"] }
+  ],
+
+  models: [
+    { m: "<model-1>", s: "PPPPP PPPPPPP PPPPP" },
+    { m: "<model-2>", s: "PPPPF PPPPPPP PPPPF" },
+    { m: "<model-3>", s: "PUPPP FNNNNNN FNNNN" }
+  ],
+
+  evidence: {
+    "<model-3>|chat:tool-call": "chat:tool-call timed out; no re-run recorded"
+  },
+
+  tiles: [
+    { k: "pass",  from: "P", of: "total", label: "cases passed",       d: "Deterministic passes only." },
+    { k: "fail",  from: "F",              label: "incompatibilities",  d: "Not a timeout or transport failure." },
+    { k: "warn",  from: "U",              label: "did not complete",   d: "Timeouts/transport. Not a capability verdict." },
+    { k: "block", from: "N",              label: "not run",            d: "Gated behind a failed <code>basic</code> case." }
+  ],
+
+  barsNote: "",
+  footnote: "<PLACEHOLDER caveat — where it ran, what that implies about production, which commit the binary was built from.>"
+};
+
+(function () {
+  var R = REPORT;
+
+  var STATES = [
+    { k: "P", glyph: "✓", label: "pass",             bar: "passed" },
+    { k: "F", glyph: "✕", label: "incompatibility",  bar: "incompatible" },
+    { k: "U", glyph: "~", label: "did not complete", bar: "did not complete" },
+    { k: "N", glyph: "–", label: "not run",          bar: "not run" }
+  ];
+  var GLYPH = {}, LABEL = {}, BARPHRASE = {};
+  STATES.forEach(function (s) { GLYPH[s.k] = s.glyph; LABEL[s.k] = s.label; BARPHRASE[s.k] = s.bar; });
+
+  // Flatten surfaces × cases into the matrix's column order.
+  var COLS = [];
+  R.surfaces.forEach(function (surface) {
+    surface.cases.forEach(function (name) { COLS.push({ surface: surface.name, name: name, id: surface.name + ":" + name }); });
+  });
+  var N = COLS.length;
+  // Last column of each surface band, so the band can be given a heavier right edge.
+  var BAND_END = {};
+  var at = -1;
+  R.surfaces.forEach(function (surface) {
+    at += surface.cases.length;
+    BAND_END[at] = true;
+  });
+
+  // ---- validate: a malformed report must fail loudly, not render something plausible
+  R.models.forEach(function (row) {
+    row.s = row.s.replace(/\s+/g, "");
+    if (row.s.length !== N) {
+      throw new Error("row " + row.m + " has " + row.s.length + " cells, expected " + N);
+    }
+    for (var i = 0; i < N; i++) {
+      if (!GLYPH[row.s[i]]) {
+        throw new Error("row " + row.m + " cell " + i + " (" + COLS[i].id + "): unknown state '" + row.s[i] + "'");
+      }
+    }
+  });
+
+  function tally(s) {
+    var c = { P: 0, F: 0, U: 0, N: 0 };
+    for (var i = 0; i < s.length; i++) c[s[i]]++;
+    return c;
+  }
+  var total = { P: 0, F: 0, U: 0, N: 0 };
+  R.models.forEach(function (row) {
+    var c = tally(row.s);
+    for (var k in c) total[k] += c[k];
+  });
+  var cleanModels = R.models.filter(function (row) { return tally(row.s).P === N; }).length;
+
+  function cellTitle(row, i) {
+    var override = R.evidence && R.evidence[row.m + "|" + COLS[i].id];
+    return override ? override : COLS[i].id + ": " + LABEL[row.s[i]];
+  }
+
+  // ---- header
+  document.getElementById("eyebrow").textContent = R.meta;
+  document.getElementById("title").innerHTML = R.title;
+  document.getElementById("sub").innerHTML = R.sub;
+  document.getElementById("endpoint").innerHTML = R.endpoint;
+  document.getElementById("footnote").innerHTML = R.footnote;
+  document.title = R.title.replace(/<[^>]*>/g, "") + " — compatibility";
+
+  // ---- tiles (a `from` count always agrees with the matrix; a literal is explained in `d`)
+  var source = { P: total.P, F: total.F, U: total.U, N: total.N, cleanModels: cleanModels };
+  document.getElementById("tiles").innerHTML = R.tiles.map(function (t) {
+    var n = t.from ? source[t.from] : t.n;
+    var of = t.from === "cleanModels" ? "/" + R.models.length : (t.of === "total" ? "/" + (N * R.models.length) : (t.of || ""));
+    return '<div class="tile t-' + t.k + '"><div class="n">' + n +
+           (of ? '<small>' + of + '</small>' : '') + '</div>' +
+           '<div class="k">' + t.label + '</div><div class="d">' + t.d + '</div></div>';
+  }).join("");
+
+  // ---- matrix
+  var html = '<table class="matrix"><thead><tr>';
+  html += '<th class="corner band" rowspan="2"></th>';
+  R.surfaces.forEach(function (surface) {
+    html += '<th class="band" colspan="' + surface.cases.length + '">' + surface.name + '</th>';
+  });
+  html += '</tr><tr class="col">';
+  COLS.forEach(function (col, i) {
+    html += '<th class="' + (BAND_END[i] ? 'band-end' : '') + '"><span>' + col.name + '</span></th>';
+  });
+  html += '</tr></thead><tbody>';
+  R.models.forEach(function (row) {
+    html += '<tr><td class="mname">' + row.m + '</td>';
+    for (var i = 0; i < N; i++) {
+      html += '<td' + (BAND_END[i] ? ' class="band-end"' : '') + '>' +
+              '<span class="cell c-' + row.s[i] + '" title="' + cellTitle(row, i).replace(/"/g, "&quot;") + '">' +
+              GLYPH[row.s[i]] + '</span></td>';
+    }
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById("matrix").innerHTML = html;
+  document.getElementById("matrix-title").textContent =
+    "The full matrix — " + R.models.length + " models × " + N + " cases";
+
+  // ---- ranked composition bars, most passes first
+  if (R.models.length < 2) {
+    document.getElementById("bars-section").hidden = true;
+  } else {
+    var ranked = R.models.slice().sort(function (a, b) {
+      return tally(b.s).P - tally(a.s).P || a.m.localeCompare(b.m);
+    });
+    document.getElementById("bars").innerHTML = ranked.map(function (row) {
+      var c = tally(row.s);
+      // Title lists the offending cases, so a bar can be read without the matrix.
+      var segTitle = {
+        P: c.P + " passed",
+        F: c.F + " incompatible: " + row.s.split("").map(function (ch, i) { return ch === "F" ? COLS[i].id : null; }).filter(Boolean).join(", "),
+        U: c.U + " did not complete: " + row.s.split("").map(function (ch, i) { return ch === "U" ? COLS[i].id : null; }).filter(Boolean).join(", "),
+        N: c.N + " not run: gated behind the failed basic case"
+      };
+      var segs = STATES.map(function (s) {
+        if (!c[s.k]) return "";
+        return '<div class="seg seg-' + s.k + '" style="flex:' + c[s.k] + ' 1 0" title="' + segTitle[s.k].replace(/"/g, "&quot;") + '">' +
+               (c[s.k] >= 2 ? c[s.k] : "") + '</div>';
+      }).join("");
+      return '<div class="bar-row"><div class="bar-label" title="' + row.m + '">' + row.m + '</div>' +
+             '<div class="bar-track" role="img" aria-label="' + row.m + ": " + c.P + " of " + N + " passed, " +
+             c.F + " incompatible, " + c.U + " did not complete, " + c.N + ' not run">' + segs + '</div>' +
+             '<div class="bar-val">' + c.P + "/" + N + '</div></div>';
+    }).join("");
+  }
+  if (R.barsNote) {
+    var note = document.getElementById("bars-note");
+    note.innerHTML = R.barsNote; note.hidden = false;
+  }
+
+  // ---- legends, rendered from STATES so they cannot drift from the glyphs
+  document.getElementById("bars-legend").innerHTML = STATES.map(function (s) {
+    return '<span><i class="swatch" style="background:var(--' +
+           (s.k === "P" ? "pass" : s.k === "F" ? "fail" : s.k === "U" ? "warn" : "blocked") +
+           ')"></i> ' + s.bar + (s.k === "N" ? " (gated)" : "") + '</span>';
+  }).join("");
+  document.getElementById("matrix-legend").innerHTML = STATES.map(function (s) {
+    return '<span><i class="swatch glyph" style="background:var(--' +
+           (s.k === "P" ? "pass" : s.k === "F" ? "fail" : s.k === "U" ? "warn" : "blocked") +
+           ');color:var(--gi-' + (s.k === "P" ? "pass" : s.k === "F" ? "fail" : s.k === "U" ? "warn" : "block") +
+           ')">' + s.glyph + '</i> ' + s.label +
+           (s.k === "N" ? " — gated" : s.k === "F" ? " (reproduced)" : "") + '</span>';
+  }).join("");
+
+  // ---- theme toggle
+  var btn = document.getElementById("theme");
+  var order = ["auto", "dark", "light"];
+  btn.addEventListener("click", function () {
+    var cur = order.indexOf(btn.textContent.replace("theme: ", ""));
+    var next = order[(cur + 1) % order.length];
+    btn.textContent = "theme: " + next;
+    if (next === "auto") { delete document.documentElement.dataset.theme; }
+    else { document.documentElement.dataset.theme = next; }
+  });
+})();
+</script>
+</body>
+</html>
