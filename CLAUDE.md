@@ -60,7 +60,8 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-## Coding Rules
+## Rules
 
 - Code comments must be English.
-- Go follows standard conventions: gofmt, go vet, checked errors.
+- Commit comments must be English.
+- Run `make verify` and `make test` before commits code.
