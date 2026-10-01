@@ -24,10 +24,20 @@ build: ## Build the binary
 fmt: ## Format Go source (go fmt)
 	go fmt ./...
 
+## fmt-check: check gofmt without writing
+.PHONY: fmt-check
+fmt-check: ## Check Go formatting (no writes)
+	@out="$$(gofmt -l .)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed for:"; echo "$$out"; exit 1; fi
+
 ## lint: run golangci-lint
 .PHONY: lint
 lint: ## Run golangci-lint
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run
+
+## verify: run format check, vet, and lint
+.PHONY: verify
+verify: fmt-check vet lint ## Run format check, vet, and lint
 
 ## install: install the binary into GOBIN (or $(PREFIX)/bin if unset)
 .PHONY: install
