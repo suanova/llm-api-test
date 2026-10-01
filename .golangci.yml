@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  # Standard defaults: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        # Terminal/progress output: a failed write is not actionable here.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Deferred closes in HTTP clients: conventionally unchecked.
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+  exclusions:
+    rules:
+      # Test files use httptest stubs whose writes and decodes cannot
+      # meaningfully fail; errcheck on production code stays enabled.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+issues:
+  # Report every instance; the defaults cap same-text issues at 3 and make
+  # output nondeterministic.
+  max-issues-per-linter: 0
+  max-same-issues: 0

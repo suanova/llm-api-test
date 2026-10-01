@@ -24,6 +24,21 @@ build: ## Build the binary
 fmt: ## Format Go source (go fmt)
 	go fmt ./...
 
+## fmt-check: check gofmt without writing
+.PHONY: fmt-check
+fmt-check: ## Check Go formatting (no writes)
+	@out="$$(gofmt -l .)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed for:"; echo "$$out"; exit 1; fi
+
+## lint: run golangci-lint
+.PHONY: lint
+lint: ## Run golangci-lint
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run
+
+## verify: run format check, vet, and lint
+.PHONY: verify
+verify: fmt-check vet lint ## Run format check, vet, and lint
+
 ## install: install the binary into GOBIN (or $(PREFIX)/bin if unset)
 .PHONY: install
 install: build ## Install binary to GOBIN or $(PREFIX)/bin
@@ -36,16 +51,6 @@ install: build ## Install binary to GOBIN or $(PREFIX)/bin
 		install -m 0755 $(BINARY) "$(PREFIX)/bin/$(BINARY)"; \
 		echo "installed -> $(PREFIX)/bin/$(BINARY)"; \
 	fi
-
-## run: build then run compatibility tests (pass ARGS=... to filter, e.g. make run ARGS='chat:seed')
-.PHONY: run
-run: build ## Build and run compatibility tests (ARGS="test1 test2")
-	./$(BINARY) compatibility $(ARGS)
-
-## list: build then list available cases
-.PHONY: list
-list: build ## List available cases
-	./$(BINARY) list
 
 ## vet: run go vet
 .PHONY: vet
