@@ -37,16 +37,16 @@ type Text struct {
 
 // Request is the Responses API request body.
 type Request struct {
-	Model          string     `json:"model"`
-	Input          string     `json:"input"`
-	Instructions   *string    `json:"instructions,omitempty"`
-	Stream         bool       `json:"stream,omitempty"`
-	Tools          []Tool     `json:"tools,omitempty"`
-	Reasoning      *Reasoning `json:"reasoning,omitempty"`
-	Text           *Text      `json:"text,omitempty"`
-	PromptCacheKey   string     `json:"prompt_cache_key,omitempty"`
-	Temperature      *float64   `json:"temperature,omitempty"`
-	MaxOutputTokens  *int       `json:"max_output_tokens,omitempty"`
+	Model           string     `json:"model"`
+	Input           string     `json:"input"`
+	Instructions    *string    `json:"instructions,omitempty"`
+	Stream          bool       `json:"stream,omitempty"`
+	Tools           []Tool     `json:"tools,omitempty"`
+	Reasoning       *Reasoning `json:"reasoning,omitempty"`
+	Text            *Text      `json:"text,omitempty"`
+	PromptCacheKey  string     `json:"prompt_cache_key,omitempty"`
+	Temperature     *float64   `json:"temperature,omitempty"`
+	MaxOutputTokens *int       `json:"max_output_tokens,omitempty"`
 }
 
 // Usage holds token counts from the response.

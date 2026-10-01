@@ -20,19 +20,27 @@ func (c *TextFormatCase) Desc() string {
 	return "POST /responses accepts `text.format` (json_schema) and returns schema-conformant JSON"
 }
 
-// personSchema is the JSON schema the response must conform to.
+// personSchema is the JSON schema the response must conform to. Strict mode
+// requires additionalProperties:false on every object; providers that enforce
+// strict reject the request without it.
 var personSchema = cases.MustJSON(map[string]any{
 	"type": "object",
 	"properties": map[string]any{
 		"name": map[string]any{"type": "string"},
 	},
-	"required": []string{"name"},
+	"required":             []string{"name"},
+	"additionalProperties": false,
 })
+
+// textFormatPrompt must ask for JSON: with a JSON response format the provider
+// (e.g. Qwen) requires the word "json" in the prompt, otherwise it rejects the
+// request. The chat response_format case carries the same requirement.
+const textFormatPrompt = `Who are you? Reply in JSON format with a "name" field, e.g. {"name": "..."}`
 
 func (c *TextFormatCase) Run(ctx context.Context, model string) *registry.CompatResult {
 	req := &Request{
 		Model: model,
-		Input: "Who are you?",
+		Input: textFormatPrompt,
 		Text: &Text{
 			Format: cases.MustJSON(map[string]any{
 				"type":   "json_schema",

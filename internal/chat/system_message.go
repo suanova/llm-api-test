@@ -34,6 +34,10 @@ func (c *SystemMessageCase) Run(ctx context.Context, model string) *registry.Com
 		Temperature: &zero,
 	}
 	res, err := c.client.Send(ctx, req)
+	if cases.TemperatureRejected(err) {
+		req.Temperature = nil
+		res, err = c.client.Send(ctx, req)
+	}
 	if err != nil {
 		return cases.Fail("request failed: %v", err)
 	}

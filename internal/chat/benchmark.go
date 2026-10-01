@@ -17,7 +17,7 @@ func (c *BenchmarkCase) Desc() string { return "POST /v1/chat/completions latenc
 func (c *BenchmarkCase) Run(ctx context.Context, model, prompt string) *registry.Metrics {
 	maxTokens := 4096
 	req := &Request{
-		Model: model,
+		Model:    model,
 		Messages: []Message{{Role: "user", Content: prompt}},
 		// Bound generation: without a cap, a thorough prompt can run for
 		// minutes, and output length is not what throughput measures. Note
