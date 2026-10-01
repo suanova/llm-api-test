@@ -24,6 +24,11 @@ build: ## Build the binary
 fmt: ## Format Go source (go fmt)
 	go fmt ./...
 
+## lint: run golangci-lint
+.PHONY: lint
+lint: ## Run golangci-lint
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run
+
 ## install: install the binary into GOBIN (or $(PREFIX)/bin if unset)
 .PHONY: install
 install: build ## Install binary to GOBIN or $(PREFIX)/bin

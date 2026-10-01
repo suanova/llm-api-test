@@ -34,7 +34,7 @@ func statsJSON(s Summary) StatsJSON {
 }
 
 func floatStatsJSON(s FloatSummary) FloatStatsJSON {
-	return FloatStatsJSON{P50: s.P50, P95: s.P95, P99: s.P99, Min: s.Min, Max: s.Max}
+	return FloatStatsJSON(s)
 }
 
 func intStatsJSON(s IntSummary) StatsJSON {
