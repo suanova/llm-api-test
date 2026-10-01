@@ -332,3 +332,89 @@ func TestHTTPError(t *testing.T) {
 		t.Errorf("detail = %q, want mention of HTTP 400", res.Detail)
 	}
 }
+
+// TestTextFormatStrictSchema covers the strict-mode schema requirement: with
+// strict:true the provider requires additionalProperties:false on every object
+// and rejects the request without it.
+func TestTextFormatStrictSchema(t *testing.T) {
+	var format struct {
+		Strict bool `json:"strict"`
+		Schema struct {
+			AdditionalProperties *bool `json:"additionalProperties"`
+		} `json:"schema"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.Text == nil {
+			t.Error("request has no text")
+			return
+		}
+		if err := json.Unmarshal(req.Text.Format, &format); err != nil {
+			t.Errorf("decode text.format: %v", err)
+			return
+		}
+		respStream(w, `{"name":"Alice"}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	if res := (&TextFormatCase{client: client}).Run(context.Background(), "m"); !res.Pass {
+		t.Fatalf("expected pass, got: %s", res.Detail)
+	}
+	if !format.Strict {
+		t.Error("text.format.strict = false, want true")
+	}
+	if format.Schema.AdditionalProperties == nil || *format.Schema.AdditionalProperties {
+		t.Error("schema.additionalProperties missing or true; strict mode requires it to be false")
+	}
+}
+
+// TestTextFormatPromptMentionsJSON covers the provider requirement that the
+// prompt contain the word "json" when a JSON response format is requested:
+// Qwen-family upstreams reject the request otherwise.
+func TestTextFormatPromptMentionsJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if !strings.Contains(strings.ToLower(req.Input), "json") {
+			t.Errorf("request input = %q, want it to mention json", req.Input)
+		}
+		respStream(w, `{"name":"Alice"}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	if res := (&TextFormatCase{client: client}).Run(context.Background(), "m"); !res.Pass {
+		t.Fatalf("expected pass, got: %s", res.Detail)
+	}
+}
+
+// TestInstructionsRetriesWithoutTemperature covers models that reject the
+// temperature parameter: the case sends temperature 0 to make its exact-match
+// assertion deterministic, and must retry once without it rather than
+// reporting the instructions feature as unsupported.
+func TestInstructionsRetriesWithoutTemperature(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"error":{"message":"Unsupported parameter: 'temperature' is not supported with this model.","type":"invalid_request_error"}}`)
+			return
+		}
+		if req.Temperature != nil {
+			t.Errorf("retry temperature = %v, want nil", *req.Temperature)
+		}
+		respStream(w, "hello")
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	res := (&InstructionsCase{client: client}).Run(context.Background(), "m")
+	if !res.Pass {
+		t.Fatalf("expected pass after retry, got: %s", res.Detail)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+}

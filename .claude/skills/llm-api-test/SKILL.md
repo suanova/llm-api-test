@@ -225,21 +225,55 @@ Elapsed: ...
 For single-provider runs, keep the same sections minus the comparison ones
 (Results + a short analysis of what passed/failed and why).
 
-### 2. Static HTML page with charts (always, when benchmark data exists)
+### 2. Static HTML page (always)
 
-Save to `reports/` alongside the markdown report (e.g.
-`reports/benchmark-YYMMDD-<desc>.html`), showing:
+Save to `reports/` alongside the markdown report, e.g.
+`reports/compat-YYMMDD-<desc>.html`. Both page types are self-contained — no
+external CSS, JS, fonts or images — because they are opened directly from
+`file://` or a static server.
+
+**Start every page with `<meta charset="utf-8">` (right before `<title>`).**
+Opened from disk a page has no declared encoding, and non-ASCII text (e.g.
+Chinese reports) silently renders as mojibake.
+
+#### 2a. Compatibility reports — build from the template
+
+Copy `.claude/skills/llm-api-test/assets/compat-template.html` to
+`reports/compat-YYMMDD-<desc>.html` and fill it in. Do not hand-write a
+compatibility page, and do not restyle it: the template's tokens and components
+are shared by every compatibility report, so changing them there changes every
+report at once.
+
+The page carries a single `REPORT` object and renders the tiles, ranked bars,
+matrix and legends from it; the schema is documented above `const REPORT`. The
+contract:
+
+- **Matrix** — rows are models, columns are cases grouped under a band per API
+  surface, one cell per (model, case). The same shape covers a 1-model
+  `--api-format chat` run (1 × 5) and a 20-model sweep; only the width changes.
+- **Cell states** — `P` pass · `F` incompatibility · `U` did not complete
+  (timeout/transport — *not* a capability verdict) · `N` not run (gated behind a
+  failed `basic` case). Case names come from `./llm-api-test list` and the run's
+  `-o` JSON.
+- **Counts are derived, never typed.** A tile that corresponds to a cell count
+  takes its number from the data (`from:`), so it cannot contradict the matrix.
+  Only a figure that is genuinely not one count (e.g. a "333/340" that folds in
+  re-runs) is given literally, with the arithmetic explained in its detail line.
+- **Every `U` cell must say what backs it.** A timeout is not a pass. If the
+  cell was re-run, its tooltip names the re-run and its result; if it was not,
+  the tooltip says so. Never write "passes on re-run" without the saved JSON.
+- Free-form prose goes in the two marked sections — "What the sweep found" and
+  "Recommendation". Everything above them is rendered.
+
+#### 2b. Benchmark reports — charts
+
+Save as `reports/benchmark-YYMMDD-<desc>.html`, showing:
 - bar charts comparing p50 (and p95/p99) Total per endpoint/model — inline
-  SVG, no external libraries (self-contained; the page is opened directly via
-  file:// or a static server)
+  SVG, no external libraries
 - the results table, stability notes, and the recommendation
 
 Before writing the page, load the `artifact-design` skill to calibrate the
 design effort.
-
-Start the file with `<meta charset="utf-8">` (right before `<title>`). The
-page is opened directly (file://, a static server), and without the
-declaration non-ASCII text (e.g. Chinese reports) renders as mojibake.
 
 ## Pitfalls (learned the hard way)
 
@@ -260,3 +294,8 @@ declaration non-ASCII text (e.g. Chinese reports) renders as mojibake.
   directly otherwise get no charset, and non-ASCII (e.g. Chinese) text
   silently renders as mojibake. Only caught at browser-verification time, so
   declare it from the start.
+- **"Passed on re-run" is a claim that needs the re-run's JSON on disk** —
+  without the artifact the classification is unfalsifiable, and a report will
+  eventually assert a re-run that never happened (one did). Save every re-run
+  with `-o` and let the artifact decide the cell. A timeout is `U` (did not
+  complete), never `F`: the request never produced a capability answer.

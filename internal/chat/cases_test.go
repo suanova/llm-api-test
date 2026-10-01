@@ -337,3 +337,34 @@ func TestBenchmarkHTTPError(t *testing.T) {
 		t.Fatal("expected error for HTTP 503")
 	}
 }
+
+// TestSystemMessageRetriesWithoutTemperature covers models that reject the
+// temperature parameter: the case sends temperature 0 to make its exact-match
+// assertion deterministic, and must retry once without it rather than
+// reporting the system message as unsupported.
+func TestSystemMessageRetriesWithoutTemperature(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"error":{"message":"Unsupported value: 'temperature' does not support 0 with this model. Only the default (1) value is supported.","type":"invalid_request_error"}}`)
+			return
+		}
+		if req.Temperature != nil {
+			t.Errorf("retry temperature = %v, want nil", *req.Temperature)
+		}
+		chatStream(w, "hello")
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	res := (&SystemMessageCase{client: client}).Run(context.Background(), "m")
+	if !res.Pass {
+		t.Fatalf("expected pass after retry, got: %s", res.Detail)
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
+	}
+}

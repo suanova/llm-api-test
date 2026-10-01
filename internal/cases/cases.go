@@ -6,6 +6,7 @@ package cases
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"llm-api-test/internal/registry"
 )
@@ -33,6 +34,15 @@ func MustJSON(v any) json.RawMessage {
 		panic(err)
 	}
 	return b
+}
+
+// TemperatureRejected reports whether err is the provider rejecting the
+// request's temperature parameter. Models differ: some reject temperature
+// outright, others accept only their own default. Cases that assert on exact
+// model output send temperature 0 to stay deterministic, so they retry once
+// without it rather than reporting the feature under test as unsupported.
+func TemperatureRejected(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "temperature")
 }
 
 // PongPrompt is the short prompt used by latency benchmarks.
