@@ -18,8 +18,9 @@ import (
 type streamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
+			Content          string     `json:"content"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage *Usage `json:"usage"`
@@ -85,12 +86,17 @@ func (c *Client) sendStream(ctx context.Context, req *Request) (*Result, error) 
 			res.Usage = ch.Usage
 			res.Metrics.PromptTokens = ch.Usage.PromptTokens
 			res.Metrics.CompletionTokens = ch.Usage.CompletionTokens
+			res.Metrics.CachedTokens = ch.Usage.cachedTokens()
+			res.Metrics.ReasoningTokens = ch.Usage.reasoningTokens()
 		}
 		if len(ch.Choices) == 0 {
 			continue
 		}
 		delta := ch.Choices[0].Delta
-		if delta.Content != "" {
+		// Reasoning deltas (reasoning models) are output tokens too: they
+		// mark TTFT and count toward the per-token timing even though only
+		// `content` forms the answer text.
+		if delta.Content != "" || delta.ReasoningContent != "" {
 			now := time.Now()
 			if res.Metrics.TTFT == 0 {
 				res.Metrics.TTFT = now.Sub(start)
@@ -101,7 +107,7 @@ func (c *Client) sendStream(ctx context.Context, req *Request) (*Result, error) 
 			prevChunk = now
 			content.WriteString(delta.Content)
 			res.Metrics.Chunks++
-			res.Metrics.ContentBytes += len(delta.Content)
+			res.Metrics.ContentBytes += len(delta.Content) + len(delta.ReasoningContent)
 		}
 		res.ToolCalls = append(res.ToolCalls, delta.ToolCalls...)
 	}

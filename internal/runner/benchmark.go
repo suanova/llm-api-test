@@ -15,7 +15,7 @@ import (
 type BenchmarkReport struct {
 	CaseID                  string
 	Mode                    string // latency | throughput
-	Prompt                  string // pong | long
+	Prompt                  string // pong | long | filler
 	Iterations              int
 	Concurrency             int
 	TotalRequests           int
@@ -28,11 +28,26 @@ type BenchmarkReport struct {
 		Completion IntSummary
 		Prompt     IntSummary
 	}
-	AvgContentBytes int64
-	AvgChunks       int64
-	RPS             float64
-	TokensPerSec    float64 // usage-based tokens/s (non-streamed runs)
-	Elapsed         time.Duration
+	InputTokens       int     // Σ prompt tokens over successful requests
+	CachedTokens      int     // Σ cache-read prompt tokens over successful requests
+	CacheHitRate      float64 // CachedTokens / InputTokens; 0 when no prompt tokens reported
+	InputTokensPerSec float64 // Σ prompt tokens / wall clock
+	AvgContentBytes   int64
+	AvgChunks         int64
+	RPS               float64
+	TokensPerSec      float64            // usage-based tokens/s (non-streamed runs)
+	Samples           []registry.Metrics // per-request observations for the JSON report
+	Elapsed           time.Duration
+	// Rate mode (--rps) offering stats; zero for wave-based runs.
+	OfferedRPS  float64
+	Duration    time.Duration
+	Sent        int
+	Shed        int
+	HTTP429     int
+	HTTP5xx     int
+	Incomplete  int
+	InFlight    IntSummary
+	AchievedRPS float64
 }
 
 // RunBenchmark runs the benchmark case `iterations` times, each time with
@@ -61,6 +76,7 @@ func RunBenchmark(ctx context.Context, bc registry.BenchmarkCase, model, prompt 
 	if elapsed := time.Since(start); elapsed > 0 {
 		r.RPS = float64(r.TotalRequests) / elapsed.Seconds()
 		r.TokensPerSec = float64(sum) / elapsed.Seconds()
+		r.InputTokensPerSec = float64(r.InputTokens) / elapsed.Seconds()
 		r.Elapsed = elapsed
 	}
 	return r
@@ -119,8 +135,16 @@ func runWaves(ctx context.Context, bc registry.BenchmarkCase, model, prompt stri
 // TPOT/TPS/Tokens/Output are only reported in throughput mode.
 func FormatBenchmarkReport(r BenchmarkReport) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "  %s  (%d iters x %d concurrency = %d requests)\n",
-		r.CaseID, r.Iterations, r.Concurrency, r.TotalRequests)
+	if r.OfferedRPS > 0 {
+		fmt.Fprintf(&b, "  %s  rate mode: offered %.1f req/s for %s\n", r.CaseID, r.OfferedRPS, r.Duration)
+		fmt.Fprintf(&b, "    Sent: %d  Shed: %d  Completed: %d  Incomplete: %d  HTTP 429: %d  HTTP 5xx: %d\n",
+			r.Sent, r.Shed, r.TotalRequests, r.Incomplete, r.HTTP429, r.HTTP5xx)
+		fmt.Fprintf(&b, "    Achieved: %.1f req/s   In-flight p50/p90/p99/max: %d/%d/%d/%d\n",
+			r.AchievedRPS, r.InFlight.P50, r.InFlight.P90, r.InFlight.P99, r.InFlight.Max)
+	} else {
+		fmt.Fprintf(&b, "  %s  (%d iters x %d concurrency = %d requests)\n",
+			r.CaseID, r.Iterations, r.Concurrency, r.TotalRequests)
+	}
 	if r.Stream {
 		fmt.Fprintf(&b, "    TTFB:  %s\n", FormatSummary(r.TTFB))
 		fmt.Fprintf(&b, "    TTFT:  %s\n", FormatSummary(r.TTFT))
@@ -136,6 +160,13 @@ func FormatBenchmarkReport(r BenchmarkReport) string {
 				r.AvgContentBytes, r.AvgChunks)
 		} else {
 			fmt.Fprintf(&b, "    Tokens: %.1f tok/s (from usage)\n", r.TokensPerSec)
+		}
+		if r.InputTokensPerSec > 0 {
+			fmt.Fprintf(&b, "    Input:  %.1f tok/s (from usage)\n", r.InputTokensPerSec)
+		}
+		if r.CachedTokens > 0 {
+			fmt.Fprintf(&b, "    Cache:  %d/%d prompt tokens (%.1f%%) read from cache\n",
+				r.CachedTokens, r.InputTokens, 100*r.CacheHitRate)
 		}
 	}
 	fmt.Fprintf(&b, "    RPS:    %.1f req/s\n", r.RPS)

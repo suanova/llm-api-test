@@ -45,16 +45,23 @@ type ToolFunction struct {
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
+// StreamOptions asks the provider to account usage in streamed responses.
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 // Request is the Chat Completions request body.
 type Request struct {
 	Model               string          `json:"model"`
 	Messages            []Message       `json:"messages"`
 	Stream              bool            `json:"stream,omitempty"`
+	StreamOptions       *StreamOptions  `json:"stream_options,omitempty"`
 	Tools               []Tool          `json:"tools,omitempty"`
 	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
 	Seed                *int            `json:"seed,omitempty"`
 	Temperature         *float64        `json:"temperature,omitempty"`
 	MaxCompletionTokens *int            `json:"max_completion_tokens,omitempty"`
+	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
 }
 
 // Usage holds token counts from the response.
@@ -65,10 +72,37 @@ type Usage struct {
 	PromptTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
+	// CompletionTokensDetails breaks down the completion tokens; reasoning
+	// models report their (often cap-consuming) reasoning share here.
+	CompletionTokensDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details,omitempty"`
 	// PromptCacheHitTokens/MissTokens is the DeepSeek-style cache pair;
 	// DeepSeek reports these instead of prompt_tokens_details.
 	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
+}
+
+// cachedTokens returns the number of prompt tokens served from cache,
+// preferring the OpenAI-standard prompt_tokens_details pair over the
+// DeepSeek-style prompt_cache_hit_tokens.
+func (u *Usage) cachedTokens() int {
+	if u.PromptTokensDetails != nil {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	if u.PromptCacheHitTokens > 0 {
+		return u.PromptCacheHitTokens
+	}
+	return 0
+}
+
+// reasoningTokens returns the reasoning share of the completion tokens, when
+// the provider reports it (reasoning models).
+func (u *Usage) reasoningTokens() int {
+	if u.CompletionTokensDetails != nil {
+		return u.CompletionTokensDetails.ReasoningTokens
+	}
+	return 0
 }
 
 // Response is the non-streaming Chat Completions response body.
@@ -137,6 +171,8 @@ func (c *Client) sendPlain(ctx context.Context, req *Request) (*Result, error) {
 		res.Usage = out.Usage
 		res.Metrics.PromptTokens = out.Usage.PromptTokens
 		res.Metrics.CompletionTokens = out.Usage.CompletionTokens
+		res.Metrics.CachedTokens = out.Usage.cachedTokens()
+		res.Metrics.ReasoningTokens = out.Usage.reasoningTokens()
 	}
 	return res, nil
 }

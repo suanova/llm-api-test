@@ -37,6 +37,8 @@ type Metrics struct {
 	TPOTs            []time.Duration // time between consecutive content chunks
 	CompletionTokens int
 	PromptTokens     int
+	CachedTokens     int // prompt tokens served from cache, when the provider reports them
+	ReasoningTokens  int // reasoning subset of CompletionTokens, when the provider reports it
 	ContentBytes     int
 	Chunks           int
 	Err              error // non-nil when the request failed
@@ -109,6 +111,13 @@ type Params struct {
 	Config *config.Config
 	Stream bool
 	Debug  io.Writer // receives --http-debug dumps
+	// MaxOutputTokens caps generation per benchmark request; 0 selects the
+	// format default (4096). Set by the --max-output-tokens flag.
+	MaxOutputTokens int
+	// ReasoningEffort is passed to reasoning-capable benchmark formats
+	// (chat reasoning_effort, responses reasoning.effort); empty leaves the
+	// provider default. Set by the --reasoning-effort flag.
+	ReasoningEffort string
 }
 
 // Format describes one API format (chat, responses, messages). The format

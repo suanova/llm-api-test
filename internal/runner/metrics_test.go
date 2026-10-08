@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,57 @@ func TestDurationSummary(t *testing.T) {
 	}
 	if s.P95 != 10e9 || s.P99 != 10e9 {
 		t.Errorf("p95/p99 = %v/%v, want 10s/10s", s.P95, s.P99)
+	}
+}
+
+// P90 backs the vendor benchmark's percentile set (P50/P90/P99). With 100
+// values 1ms..100ms the nearest-rank index is (90*100)/100 = 90 → 91ms.
+func TestDurationSummaryP90(t *testing.T) {
+	durs := make([]time.Duration, 100)
+	for i := range durs {
+		durs[i] = time.Duration(i+1) * time.Millisecond
+	}
+	if got := durationSummary(durs).P90; got != 91*time.Millisecond {
+		t.Errorf("P90 = %v, want 91ms", got)
+	}
+}
+
+func TestFloatSummaryP90(t *testing.T) {
+	vals := make([]float64, 100)
+	for i := range vals {
+		vals[i] = float64(i + 1)
+	}
+	if got := floatSummary(vals).P90; got != 91 {
+		t.Errorf("P90 = %v, want 91", got)
+	}
+}
+
+func TestIntSummaryP90(t *testing.T) {
+	vals := make([]int, 100)
+	for i := range vals {
+		vals[i] = i + 1
+	}
+	if got := intSummary(vals).P90; got != 91 {
+		t.Errorf("P90 = %v, want 91", got)
+	}
+}
+
+// Every text formatter must carry the p90 value into the report lines.
+func TestFormattersIncludeP90(t *testing.T) {
+	s := Summary{P50: time.Second, P90: 2 * time.Second, P95: 3 * time.Second, P99: 4 * time.Second, Min: time.Second, Max: 4 * time.Second}
+	if out := FormatSummary(s); !strings.Contains(out, "p90=2s") {
+		t.Errorf("FormatSummary = %q, want p90=2s", out)
+	}
+	if out := FormatSummaryMs1(s); !strings.Contains(out, "p90=2000.0ms") {
+		t.Errorf("FormatSummaryMs1 = %q, want p90=2000.0ms", out)
+	}
+	f := FloatSummary{P50: 1, P90: 2, P95: 3, P99: 4, Min: 1, Max: 4}
+	if out := FormatFloatSummary(f); !strings.Contains(out, "p90=2.0") {
+		t.Errorf("FormatFloatSummary = %q, want p90=2.0", out)
+	}
+	i := IntSummary{P50: 1, P90: 2, P95: 3, P99: 4, Min: 1, Max: 4}
+	if out := FormatIntSummary(i); !strings.Contains(out, "p90=2") {
+		t.Errorf("FormatIntSummary = %q, want p90=2", out)
 	}
 }
 
@@ -47,6 +99,43 @@ func TestAggregateExcludesFailed(t *testing.T) {
 }
 
 var errBoom = context.Canceled
+
+// The aggregate sums prompt and cache-read tokens over successful requests
+// (input throughput and observed cache hit rate derive from them); failed
+// requests contribute to neither.
+func TestAggregateSumsInputAndCache(t *testing.T) {
+	ms := []registry.Metrics{
+		{Total: time.Second, PromptTokens: 100, CachedTokens: 80},
+		{Total: time.Second, PromptTokens: 100, CachedTokens: 20},
+		{Err: errBoom, PromptTokens: 999, CachedTokens: 999},
+	}
+	r := aggregate(ms)
+	if r.InputTokens != 200 || r.CachedTokens != 100 {
+		t.Errorf("InputTokens/CachedTokens = %d/%d, want 200/100", r.InputTokens, r.CachedTokens)
+	}
+	if r.CacheHitRate != 0.5 {
+		t.Errorf("CacheHitRate = %v, want 0.5", r.CacheHitRate)
+	}
+}
+
+// The report keeps one sample per request (failed ones included, with their
+// error) for the JSON per-request array.
+func TestAggregateKeepsSamples(t *testing.T) {
+	ms := []registry.Metrics{
+		{Total: time.Second, PromptTokens: 100},
+		{Err: errBoom},
+	}
+	r := aggregate(ms)
+	if len(r.Samples) != 2 {
+		t.Fatalf("Samples = %d, want 2 (failed requests included)", len(r.Samples))
+	}
+	if r.Samples[0].PromptTokens != 100 {
+		t.Errorf("Samples[0].PromptTokens = %d, want 100", r.Samples[0].PromptTokens)
+	}
+	if r.Samples[1].Err == nil {
+		t.Error("failed sample lost its error")
+	}
+}
 
 func TestRunCompatGating(t *testing.T) {
 	run := 0
