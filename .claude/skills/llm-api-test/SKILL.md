@@ -107,11 +107,31 @@ the JSON report (text still goes to stdout).
 ```bash
 ./llm-api-test latency -c <config> --api-format chat --iterations 10 --concurrency 5
 ./llm-api-test throughput -c <config> --api-format chat --iterations 3 --concurrency 3
+# long-context tier run: ~N-token filler prompt, output capped (e.g. 100:1 ratio)
+./llm-api-test throughput -c <config> --input-tokens 8000 --max-output-tokens 80
 ```
 
 - The prompt is fixed per command (`latency`: pong; `throughput`: a fixed
-  "write a ~3000-word article" prompt, ~4-6k output tokens) — there is no
-  `--prompt` flag.
+  "write a ~3000-word article" prompt, ~4-6k output tokens) unless
+  `--input-tokens N` replaces it with a deterministic filler prompt of about
+  N tokens (the provider's `usage` reports the real size; the report labels
+  the run `filler:<N>`). There is no free-form `--prompt` flag.
+- `--max-output-tokens M` overrides the 4096 generation cap. Pair it with
+  `--input-tokens` to reproduce a vendor benchmark's fixed input:output
+  ratio (e.g. 100:1) at a given context tier.
+- `--reasoning-effort E` passes the value through to chat (`reasoning_effort`)
+  and responses (`reasoning.effort`). Reasoning models count reasoning tokens
+  in `completion_tokens`, so a small cap (e.g. the 100:1 ratio) gets eaten by
+  thinking and the visible answer never starts — use `none` to disable
+  thinking on providers that support it (fncompute kimi-k3 does).
+- **Rate mode** `--rps N --duration T` (with `--max-in-flight M`) runs a
+  sustained open-loop load instead of waves — the mode for verifying a
+  vendor's RPM/TPM capacity commitment: offered vs achieved rate,
+  sent/shed/completed, HTTP 429/5xx tallies, in-flight distribution.
+  E.g. `latency --rps 20 --duration 3m --input-tokens 1000 --max-output-tokens 10 --reasoning-effort none`.
+- Reports carry p50/p90/p95/p99; JSON includes a per-request `requests[]`
+  array (tpot_ms/otps/tokens/cached_tokens/reasoning_tokens) so per-request
+  statistics can be recomputed from raw data.
 - Always pass `-o <path>.json` so you can build comparison tables and the
   chart page from structured data instead of parsing the text report.
 - A live progress line goes to **stderr** (`[benchmark] elapsed 5s, 3/10

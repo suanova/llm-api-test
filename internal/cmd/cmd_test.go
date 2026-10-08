@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"llm-api-test/internal/chat"
@@ -499,6 +500,150 @@ func TestThroughputDefaults(t *testing.T) {
 	}
 	if !strings.Contains(out, "9 requests") {
 		t.Errorf("throughput default should be 3x3=9 requests\noutput:\n%s", out)
+	}
+}
+
+// --input-tokens replaces the built-in prompt with a filler prompt of about
+// N tokens and --max-output-tokens pins the generation cap; the run is
+// labeled "filler" and the JSON report records the per-request token data.
+func TestBenchmarkInputTokensFlag(t *testing.T) {
+	var mu sync.Mutex
+	var reqs []chat.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chat.Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode chat request: %v", err)
+			return
+		}
+		mu.Lock()
+		reqs = append(reqs, req)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w, `{"choices":[{"delta":{"content":"ok"}}]}`)
+		sse(w, `{"usage":{"prompt_tokens":201,"completion_tokens":8,"prompt_tokens_details":{"cached_tokens":150}}}`)
+		sse(w, "[DONE]")
+	}))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+	outPath := filepath.Join(t.TempDir(), "tier.json")
+
+	code, out := runRoot(t, "--config", cfg, "-o", outPath, "throughput",
+		"--input-tokens", "200", "--max-output-tokens", "8", "--reasoning-effort", "none",
+		"--iterations", "1", "--concurrency", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "prompt=filler:200") {
+		t.Errorf("output missing filler prompt label\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "Cache:") {
+		t.Errorf("output missing cache line\noutput:\n%s", out)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reqs) != 2 {
+		t.Fatalf("server saw %d requests, want 2", len(reqs))
+	}
+	for _, req := range reqs {
+		if req.MaxCompletionTokens == nil || *req.MaxCompletionTokens != 8 {
+			t.Errorf("max_completion_tokens = %v, want 8", req.MaxCompletionTokens)
+		}
+		if req.ReasoningEffort != "none" {
+			t.Errorf("reasoning_effort = %q, want none", req.ReasoningEffort)
+		}
+		if len(req.Messages) != 1 {
+			t.Fatalf("request messages = %d, want 1", len(req.Messages))
+		}
+		// FillerPrompt(200) targets ~150 words plus the trailing instruction.
+		if words := len(strings.Fields(req.Messages[0].Content)); words < 140 {
+			t.Errorf("request prompt = %d words, want filler of ~150", words)
+		}
+		if req.StreamOptions == nil || !req.StreamOptions.IncludeUsage {
+			t.Errorf("stream_options = %+v, want include_usage=true", req.StreamOptions)
+		}
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reports []runner.BenchmarkJSONReport
+	if err := json.Unmarshal(data, &reports); err != nil {
+		t.Fatalf("parse report: %v\n%s", err, data)
+	}
+	r := reports[0]
+	if r.Prompt != "filler:200" {
+		t.Errorf("report prompt = %q, want filler:200", r.Prompt)
+	}
+	if len(r.Requests) != 2 {
+		t.Fatalf("report requests = %d, want 2", len(r.Requests))
+	}
+	if r.Requests[0].PromptTokens != 201 || r.Requests[0].CachedTokens != 150 {
+		t.Errorf("per-request tokens wrong: %+v", r.Requests[0])
+	}
+	if r.InputTokens != 402 || r.CachedTokens != 300 {
+		t.Errorf("input/cached totals = %d/%d, want 402/300", r.InputTokens, r.CachedTokens)
+	}
+	if r.InputTokensPerSec <= 0 {
+		t.Errorf("InputTokensPerSec = %v, want > 0", r.InputTokensPerSec)
+	}
+}
+
+// --rps runs the benchmark in open-loop rate mode: the text report and JSON
+// carry the offering stats (sent/shed/429/achieved/in-flight).
+func TestRateModeRun(t *testing.T) {
+	server := httptest.NewServer(apiMockHandler(t))
+	defer server.Close()
+	cfg := writeConfig(t, t.TempDir(), server.URL)
+	outPath := filepath.Join(t.TempDir(), "rate.json")
+
+	code, out := runRoot(t, "--config", cfg, "-o", outPath, "latency",
+		"--rps", "20", "--duration", "300ms", "--max-in-flight", "16", "--iterations", "1", "--concurrency", "1")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(out, "rate mode: offered 20.0 req/s") {
+		t.Errorf("output missing rate header\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "Sent:") || !strings.Contains(out, "HTTP 429:") {
+		t.Errorf("output missing rate stats\noutput:\n%s", out)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reports []runner.BenchmarkJSONReport
+	if err := json.Unmarshal(data, &reports); err != nil {
+		t.Fatalf("parse report: %v\n%s", err, data)
+	}
+	r := reports[0]
+	if r.OfferedRPS != 20 || r.DurationMS != 300 {
+		t.Errorf("offered/duration = %v/%d, want 20/300", r.OfferedRPS, r.DurationMS)
+	}
+	// 20 req/s x 0.3s = 6 offered; pacing jitter makes this a range check.
+	if r.Sent < 3 || r.Sent > 8 {
+		t.Errorf("Sent = %d, want ~6", r.Sent)
+	}
+	if r.Shed != 0 || r.HTTP429 != 0 || r.Incomplete != 0 {
+		t.Errorf("shed/429/incomplete = %d/%d/%d, want 0/0/0", r.Shed, r.HTTP429, r.Incomplete)
+	}
+	if len(r.Requests) == 0 || r.AchievedRPS <= 0 {
+		t.Errorf("requests/achieved = %d/%v, want populated", len(r.Requests), r.AchievedRPS)
+	}
+}
+
+// Rate mode needs both --rps and --duration; each alone is a usage error.
+func TestRateModeFlagValidation(t *testing.T) {
+	cfg := writeConfig(t, t.TempDir(), "http://mock.invalid")
+	code, out := runRoot(t, "--config", cfg, "latency", "--duration", "1m")
+	if code != 2 || !strings.Contains(out, "--duration requires --rps") {
+		t.Errorf("--duration alone: code = %d, want 2 with explanation\noutput:\n%s", code, out)
+	}
+	code, out = runRoot(t, "--config", cfg, "latency", "--rps", "20")
+	if code != 2 || !strings.Contains(out, "--rps requires --duration") {
+		t.Errorf("--rps alone: code = %d, want 2 with explanation\noutput:\n%s", code, out)
 	}
 }
 

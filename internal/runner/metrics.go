@@ -8,19 +8,19 @@ import (
 	"llm-api-test/internal/registry"
 )
 
-// Summary holds p50/p95/p99/min/max for a duration metric.
+// Summary holds p50/p90/p95/p99/min/max for a duration metric.
 type Summary struct {
-	P50, P95, P99, Min, Max time.Duration
+	P50, P90, P95, P99, Min, Max time.Duration
 }
 
 // FloatSummary is Summary for float metrics (TPS).
 type FloatSummary struct {
-	P50, P95, P99, Min, Max float64
+	P50, P90, P95, P99, Min, Max float64
 }
 
 // IntSummary is Summary for token counts.
 type IntSummary struct {
-	P50, P95, P99, Min, Max int
+	P50, P90, P95, P99, Min, Max int
 }
 
 // percentileIndex is the "nearest rank" index into a sorted slice.
@@ -45,6 +45,7 @@ func durationSummary(durs []time.Duration) Summary {
 		Min: sorted[0],
 		Max: sorted[len(sorted)-1],
 		P50: sorted[percentileIndex(len(sorted), 50)],
+		P90: sorted[percentileIndex(len(sorted), 90)],
 		P95: sorted[percentileIndex(len(sorted), 95)],
 		P99: sorted[percentileIndex(len(sorted), 99)],
 	}
@@ -61,6 +62,7 @@ func floatSummary(vals []float64) FloatSummary {
 		Min: sorted[0],
 		Max: sorted[len(sorted)-1],
 		P50: sorted[percentileIndex(len(sorted), 50)],
+		P90: sorted[percentileIndex(len(sorted), 90)],
 		P95: sorted[percentileIndex(len(sorted), 95)],
 		P99: sorted[percentileIndex(len(sorted), 99)],
 	}
@@ -77,6 +79,7 @@ func intSummary(vals []int) IntSummary {
 		Min: sorted[0],
 		Max: sorted[len(sorted)-1],
 		P50: sorted[percentileIndex(len(sorted), 50)],
+		P90: sorted[percentileIndex(len(sorted), 90)],
 		P95: sorted[percentileIndex(len(sorted), 95)],
 		P99: sorted[percentileIndex(len(sorted), 99)],
 	}
@@ -85,29 +88,29 @@ func intSummary(vals []int) IntSummary {
 // FormatSummary renders a duration Summary in milliseconds.
 func FormatSummary(s Summary) string {
 	ms := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
-	return fmt.Sprintf("p50=%s p95=%s p99=%s min=%s max=%s",
-		ms(s.P50), ms(s.P95), ms(s.P99), ms(s.Min), ms(s.Max))
+	return fmt.Sprintf("p50=%s p90=%s p95=%s p99=%s min=%s max=%s",
+		ms(s.P50), ms(s.P90), ms(s.P95), ms(s.P99), ms(s.Min), ms(s.Max))
 }
 
 // FormatSummaryMs1 renders a duration Summary with one decimal millisecond
 // precision (used for TPOT, which is typically sub-10ms).
 func FormatSummaryMs1(s Summary) string {
 	ms := func(d time.Duration) string { return fmt.Sprintf("%.1fms", float64(d)/float64(time.Millisecond)) }
-	return fmt.Sprintf("p50=%s p95=%s p99=%s min=%s max=%s",
-		ms(s.P50), ms(s.P95), ms(s.P99), ms(s.Min), ms(s.Max))
+	return fmt.Sprintf("p50=%s p90=%s p95=%s p99=%s min=%s max=%s",
+		ms(s.P50), ms(s.P90), ms(s.P95), ms(s.P99), ms(s.Min), ms(s.Max))
 }
 
 // FormatFloatSummary renders a FloatSummary.
 func FormatFloatSummary(s FloatSummary) string {
 	f := func(v float64) string { return fmt.Sprintf("%.1f", v) }
-	return fmt.Sprintf("p50=%s p95=%s p99=%s min=%s max=%s",
-		f(s.P50), f(s.P95), f(s.P99), f(s.Min), f(s.Max))
+	return fmt.Sprintf("p50=%s p90=%s p95=%s p99=%s min=%s max=%s",
+		f(s.P50), f(s.P90), f(s.P95), f(s.P99), f(s.Min), f(s.Max))
 }
 
-// FormatIntSummary renders the p50/p95/p99 of an IntSummary (min/max are
+// FormatIntSummary renders the p50/p90/p95/p99 of an IntSummary (min/max are
 // omitted for token counts).
 func FormatIntSummary(s IntSummary) string {
-	return fmt.Sprintf("p50=%d p95=%d p99=%d", s.P50, s.P95, s.P99)
+	return fmt.Sprintf("p50=%d p90=%d p95=%d p99=%d", s.P50, s.P90, s.P95, s.P99)
 }
 
 // aggregate computes summaries from per-request metrics. Failed requests
@@ -122,6 +125,8 @@ func aggregate(metrics []registry.Metrics) BenchmarkReport {
 		if m.Err != nil {
 			r.Failed++
 			r.Errors = append(r.Errors, m.Err.Error())
+			m.TPOTs = nil // the report keeps per-request scalars only
+			r.Samples = append(r.Samples, m)
 			continue
 		}
 		successes++
@@ -144,8 +149,12 @@ func aggregate(metrics []registry.Metrics) BenchmarkReport {
 		if m.PromptTokens > 0 {
 			prompt = append(prompt, m.PromptTokens)
 		}
+		r.InputTokens += m.PromptTokens
+		r.CachedTokens += m.CachedTokens
 		r.AvgContentBytes += int64(m.ContentBytes)
 		r.AvgChunks += int64(m.Chunks)
+		m.TPOTs = nil // the report keeps per-request scalars only
+		r.Samples = append(r.Samples, m)
 	}
 	r.TTFB = durationSummary(ttfb)
 	r.TTFT = durationSummary(ttft)
@@ -154,6 +163,9 @@ func aggregate(metrics []registry.Metrics) BenchmarkReport {
 	r.TPS = floatSummary(tps)
 	r.Tokens.Completion = intSummary(completion)
 	r.Tokens.Prompt = intSummary(prompt)
+	if r.InputTokens > 0 {
+		r.CacheHitRate = float64(r.CachedTokens) / float64(r.InputTokens)
+	}
 	if successes > 0 {
 		r.AvgContentBytes /= int64(successes)
 		r.AvgChunks /= int64(successes)

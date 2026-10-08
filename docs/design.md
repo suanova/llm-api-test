@@ -115,10 +115,48 @@ Flags (both commands; defaults differ — latency 5x10, throughput 3x3):
       --api-format string   API format to test: all, chat, responses, messages (default "chat")
       --concurrency int     concurrent requests per iteration (default 5 / 3)
       --iterations int      iterations per benchmark case (default 10 / 3)
+      --input-tokens int    replace the prompt with a generated filler prompt of about N tokens (0 = built-in prompt)
+      --max-output-tokens int  generation cap per request, in tokens (default 4096)
+      --reasoning-effort string  reasoning effort for reasoning-capable formats, e.g. none disables thinking
+      --rps float           rate mode: offer this many requests per second (needs --duration)
+      --duration duration   rate mode: how long to offer the rate (e.g. 3m)
+      --max-in-flight int   rate mode: in-flight cap; over-cap ticks are counted as shed (default 1024)
 ```
 
 Throughput defaults to 3x3 because each request is expensive (long prompt,
 ~1 min each); latency requests are cheap so it defaults to 5x10.
+
+`--input-tokens N` switches the run to a deterministic filler prompt of about
+N tokens (`cases.FillerPrompt`; English ≈ 1.33 tokens per word, so ~0.75·N
+words) ending in an instruction that keeps generation running to the cap. The
+report labels such runs `filler:<N>` in the text header and JSON `prompt`
+field — the prompt text itself is never embedded (it can be megabytes). The
+real input size is whatever the provider reports in `usage`. `--max-output-tokens`
+overrides the 4096 default cap; together the two flags pin a fixed
+input:output ratio (e.g. 100:1) for long-context tier runs that mirror a
+vendor benchmark's fixed load shape.
+
+`--reasoning-effort E` is passed through to the reasoning-capable benchmark
+formats (chat: `reasoning_effort`; responses: `reasoning.effort`); messages
+has no equivalent and ignores it. Reasoning models count reasoning tokens in
+`completion_tokens`, so with a vendor-style tiny cap the reasoning phase can
+consume the whole budget and the visible answer never starts (`finish_reason:
+length`, empty `content`); `none` disables thinking where the provider
+supports it.
+
+**Rate mode** (`--rps N --duration T`) replaces the iterations × concurrency
+wave model with an open-loop offering: one tick every 1/N seconds issues a
+request regardless of completions, until T elapses; ticks that find
+`--max-in-flight` requests already running (default 1024) are counted as
+shed so the offered shape stays visible in the report. Afterwards the run
+drains for as long as the context budget allows (`--duration` plus a 5-minute
+drain timeout) and counts requests still running at the deadline as
+incomplete. The report adds offered/achieved req/s, sent/shed/completed,
+HTTP 429/5xx tallies, and the per-second in-flight distribution
+(p50/p90/p99/max) — the shape a platform's RPM/TPM capacity commitment is
+verified with: sustained offered rate, zero shed/incomplete, 429/5xx tallies,
+and the latency summaries measured under that rate. Failure classes come from
+the `HTTP <code>` prefix every format client uses (429, 5xx, other).
 
 Both default to `--api-format chat` and run one format per invocation: the
 formats are separate endpoints (and often separate translation paths on a
@@ -139,7 +177,7 @@ spectrum: TTFT-dominated, higher variance, much higher token cost.
 
 ### Indicators
 
-All latency indicators are reported as p50/p95/p99/min/max.
+All latency indicators are reported as p50/p90/p95/p99/min/max.
 
 | Indicator | Meaning |
 |---|---|
@@ -150,6 +188,8 @@ All latency indicators are reported as p50/p95/p99/min/max.
 | TPS | output tokens per second (throughput mode) |
 | RPS | requests per second (`total_requests / elapsed`) |
 | Tokens | prompt / completion token counts (throughput mode) |
+| Input | input tokens per second, Σprompt/elapsed (throughput mode) |
+| Cache | observed cache reads, Σcached/Σprompt (throughput mode, when reported) |
 | Output | avg content bytes and chunk count (throughput mode) |
 | Failed | count of non-2xx / timeout / parse failures |
 
@@ -163,9 +203,9 @@ the `usage` fields.
 iterations=10  concurrency=5  prompt=pong
 
   benchmark-chat  (10 iters x 5 concurrency = 50 requests)
-    TTFB:  p50=180ms p95=410ms p99=590ms min=120ms max=620ms
-    TTFT:  p50=210ms p95=450ms p99=620ms min=150ms max=680ms
-    Total: p50=380ms p95=620ms p99=890ms min=250ms max=950ms
+    TTFB:  p50=180ms p90=310ms p95=410ms p99=590ms min=120ms max=620ms
+    TTFT:  p50=210ms p90=340ms p95=450ms p99=620ms min=150ms max=680ms
+    Total: p50=380ms p90=520ms p95=620ms p99=890ms min=250ms max=950ms
     RPS:   11.9 req/s
     Failed: 0/50
     Elapsed: 4.2s
@@ -174,10 +214,12 @@ iterations=10  concurrency=5  prompt=pong
 Throughput mode adds:
 
 ```
-    TPOT:  p50=18.5ms p95=24.2ms p99=32.1ms min=12.0ms max=38.5ms
-    TPS:   p50=54.0  p95=41.0  p99=31.0  min=26.0  max=83.0 tok/s
-    Tokens: completion p50=52 p95=58 p99=64  prompt p50=15 p95=15 p99=15
+    TPOT:  p50=18.5ms p90=22.0ms p95=24.2ms p99=32.1ms min=12.0ms max=38.5ms
+    TPS:   p50=54.0  p90=45.5  p95=41.0  p99=31.0  min=26.0  max=83.0 tok/s
+    Tokens: completion p50=52 p90=56 p95=58 p99=64  prompt p50=15 p90=15 p95=15 p99=15
     Output: avg_content=234 bytes  avg_chunks=52
+    Input:  1234.5 tok/s (from usage)
+    Cache:  4970/5030 prompt tokens (98.8%) read from cache
 ```
 
 ## JSON report
@@ -233,7 +275,7 @@ type BenchmarkReport struct {
 	APIFormat     string  `json:"api_format"`
 	CaseID        string  `json:"case_id"` // e.g. "chat:benchmark"
 	Mode          string  `json:"mode"`    // latency | throughput
-	Prompt        string  `json:"prompt"`  // pong | long
+	Prompt        string  `json:"prompt"`  // pong | long | filler:<N>
 	Stream        bool    `json:"stream"`
 	Iterations    int     `json:"iterations"`
 	Concurrency   int     `json:"concurrency"`
@@ -245,15 +287,21 @@ type BenchmarkReport struct {
 	TPOT          *Stats  `json:"tpot,omitempty"` // throughput mode, streamed
 	TPS           *Stats  `json:"tps,omitempty"`
 	Tokens        *Tokens `json:"tokens,omitempty"`
+	InputTokens       int     `json:"input_tokens,omitempty"`         // Σ prompt tokens, successful requests
+	InputTokensPerSec float64 `json:"input_tokens_per_sec,omitempty"` // Σ prompt / elapsed
+	CachedTokens      int     `json:"cached_tokens,omitempty"`        // Σ cache reads
+	CacheHitRate      float64 `json:"cache_hit_rate,omitempty"`       // cached / prompt
 	AvgContentBytes int64 `json:"avg_content_bytes,omitempty"`
 	AvgChunks     int64   `json:"avg_chunks,omitempty"`
 	RPS           float64 `json:"rps"`
 	TokensPerSec  float64 `json:"tokens_per_sec,omitempty"` // usage tokens / elapsed
 	ElapsedMS     int64   `json:"elapsed_ms"`
+	Requests      []Request `json:"requests,omitempty"` // one entry per benchmark request
 }
 
 type Stats struct {
 	P50 int64 `json:"p50"`
+	P90 int64 `json:"p90"`
 	P95 int64 `json:"p95"`
 	P99 int64 `json:"p99"`
 	Min int64 `json:"min"`
@@ -263,6 +311,22 @@ type Stats struct {
 type Tokens struct {
 	Completion Stats `json:"completion"`
 	Prompt     Stats `json:"prompt"`
+}
+
+// Request is one benchmark request, kept so per-request statistics (e.g. the
+// vendor benchmark's TPOT/OTPS percentiles) can be recomputed from the raw
+// data. TPOTMS = (total - ttft) / completion_tokens; OTPS = 1 / TPOTMS.
+type Request struct {
+	TTFBMS           int64   `json:"ttfb_ms,omitempty"`
+	TTFTMS           int64   `json:"ttft_ms,omitempty"`
+	TotalMS          int64   `json:"total_ms"`
+	TPOTMS           float64 `json:"tpot_ms,omitempty"`
+	OTPS             float64 `json:"otps,omitempty"`
+	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	CachedTokens     int     `json:"cached_tokens,omitempty"`
+	Chunks           int     `json:"chunks,omitempty"`
+	Error            string  `json:"error,omitempty"`
 }
 ```
 
@@ -279,11 +343,15 @@ type Tokens struct {
   "concurrency": 5,
   "total_requests": 50,
   "failed": 0,
-  "ttfb": {"p50": 180, "p95": 410, "p99": 590, "min": 120, "max": 620},
-  "ttft": {"p50": 210, "p95": 450, "p99": 620, "min": 150, "max": 680},
-  "total": {"p50": 380, "p95": 620, "p99": 890, "min": 250, "max": 950},
+  "ttfb": {"p50": 180, "p90": 310, "p95": 410, "p99": 590, "min": 120, "max": 620},
+  "ttft": {"p50": 210, "p90": 340, "p95": 450, "p99": 620, "min": 150, "max": 680},
+  "total": {"p50": 380, "p90": 520, "p95": 620, "p99": 890, "min": 250, "max": 950},
   "rps": 11.9,
-  "elapsed_ms": 4200
+  "elapsed_ms": 4200,
+  "requests": [
+    {"ttfb_ms": 180, "ttft_ms": 210, "total_ms": 380, "tpot_ms": 17.0, "otps": 58.8,
+     "prompt_tokens": 15, "completion_tokens": 10, "chunks": 10}
+  ]
 }
 ```
 

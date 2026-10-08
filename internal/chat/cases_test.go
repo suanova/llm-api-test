@@ -338,6 +338,157 @@ func TestBenchmarkHTTPError(t *testing.T) {
 	}
 }
 
+// Streamed benchmark requests must opt into usage explicitly: without
+// stream_options.include_usage most providers omit token counts, leaving the
+// benchmark's token, cache, and throughput metrics empty.
+func TestBenchmarkStreamRequestsUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.StreamOptions == nil || !req.StreamOptions.IncludeUsage {
+			t.Errorf("stream_options = %+v, want include_usage=true", req.StreamOptions)
+		}
+		chatStream(w, "a")
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	bc := &BenchmarkCase{client: client}
+	if m := bc.Run(context.Background(), "m", "p"); m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+}
+
+// The benchmark records cache-read prompt tokens from the usage report so
+// tier runs can compare observed cache behavior against the vendor numbers.
+func TestBenchmarkCachedTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSSE(w,
+			`{"choices":[{"delta":{"content":"a"}}]}`,
+			`{"usage":{"prompt_tokens":5030,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":4970}}}`,
+			"[DONE]",
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	bc := &BenchmarkCase{client: client}
+	m := bc.Run(context.Background(), "m", "p")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.CachedTokens != 4970 {
+		t.Errorf("CachedTokens = %d, want 4970", m.CachedTokens)
+	}
+}
+
+// Non-streamed runs take cache reads from the response usage too, including
+// the DeepSeek-style prompt_cache_hit_tokens pair; stream_options must not be
+// sent when the request is not streamed.
+func TestBenchmarkCachedTokensPlain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.StreamOptions != nil {
+			t.Errorf("stream_options = %+v, want nil for non-streamed request", req.StreamOptions)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"pong"}}],"usage":{"prompt_tokens":5030,"completion_tokens":20,"prompt_cache_hit_tokens":4970,"prompt_cache_miss_tokens":60}}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, false)
+	bc := &BenchmarkCase{client: client}
+	m := bc.Run(context.Background(), "m", "p")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.CachedTokens != 4970 {
+		t.Errorf("CachedTokens = %d, want 4970", m.CachedTokens)
+	}
+}
+
+// TestBenchmarkMaxTokensFromParams covers the --max-output-tokens flag: the
+// cap travels through Params into the benchmark request so tier runs can pin
+// it to the vendor's input/output ratio.
+func TestBenchmarkMaxTokensFromParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.MaxCompletionTokens == nil || *req.MaxCompletionTokens != 64 {
+			t.Errorf("request max_completion_tokens = %v, want 64", req.MaxCompletionTokens)
+		}
+		chatStream(w, "a")
+	}))
+	defer server.Close()
+
+	bc := Format().Benchmark(registry.Params{
+		Config:          &config.Config{BaseURL: server.URL, APIKey: "k"},
+		Stream:          true,
+		MaxOutputTokens: 64,
+	})
+	if m := bc.Run(context.Background(), "m", "p"); m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+}
+
+// TestBenchmarkReasoningContent covers reasoning models (e.g. kimi-k3 on
+// fncompute): they stream `reasoning_content` deltas instead of, or before,
+// `content`. The benchmark must time them as output tokens — TTFT marks the
+// first delta of either kind and TPOTs the gaps between them — even when the
+// visible answer never starts because reasoning consumed the cap.
+func TestBenchmarkReasoningContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSSE(w,
+			`{"choices":[{"delta":{"reasoning_content":"The"}}]}`,
+			`{"choices":[{"delta":{"reasoning_content":" user"}}]}`,
+			`{"choices":[{"delta":{"content":"Hello"}}]}`,
+			`{"usage":{"prompt_tokens":10,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2}}}`,
+			"[DONE]",
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	bc := &BenchmarkCase{client: client}
+	m := bc.Run(context.Background(), "m", "p")
+	if m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+	if m.TTFT <= 0 {
+		t.Error("TTFT not recorded for a reasoning-only prefix")
+	}
+	if len(m.TPOTs) != 2 { // 3 deltas → 2 gaps
+		t.Errorf("TPOTs = %d gaps, want 2", len(m.TPOTs))
+	}
+	if m.Chunks != 3 {
+		t.Errorf("Chunks = %d, want 3 (reasoning deltas count as output)", m.Chunks)
+	}
+	if m.ReasoningTokens != 2 {
+		t.Errorf("ReasoningTokens = %d, want 2", m.ReasoningTokens)
+	}
+}
+
+// TestBenchmarkReasoningEffortFromParams covers --reasoning-effort: the
+// value travels through Params into the benchmark request (e.g. none
+// disables thinking on reasoning models like kimi-k3).
+func TestBenchmarkReasoningEffortFromParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.ReasoningEffort != "none" {
+			t.Errorf("request reasoning_effort = %q, want none", req.ReasoningEffort)
+		}
+		chatStream(w, "a")
+	}))
+	defer server.Close()
+
+	bc := Format().Benchmark(registry.Params{
+		Config:          &config.Config{BaseURL: server.URL, APIKey: "k"},
+		Stream:          true,
+		ReasoningEffort: "none",
+	})
+	if m := bc.Run(context.Background(), "m", "p"); m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+}
+
 // TestSystemMessageRetriesWithoutTemperature covers models that reject the
 // temperature parameter: the case sends temperature 0 to make its exact-match
 // assertion deterministic, and must retry once without it rather than

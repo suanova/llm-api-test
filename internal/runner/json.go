@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"time"
+
+	"llm-api-test/internal/registry"
 )
 
 // The JSON report types below are the machine-readable output written by
@@ -13,6 +15,7 @@ import (
 // StatsJSON is a duration/token summary in JSON form.
 type StatsJSON struct {
 	P50 int64 `json:"p50"`
+	P90 int64 `json:"p90"`
 	P95 int64 `json:"p95"`
 	P99 int64 `json:"p99"`
 	Min int64 `json:"min"`
@@ -22,6 +25,7 @@ type StatsJSON struct {
 // FloatStatsJSON is a float summary (TPS).
 type FloatStatsJSON struct {
 	P50 float64 `json:"p50"`
+	P90 float64 `json:"p90"`
 	P95 float64 `json:"p95"`
 	P99 float64 `json:"p99"`
 	Min float64 `json:"min"`
@@ -30,7 +34,7 @@ type FloatStatsJSON struct {
 
 func statsJSON(s Summary) StatsJSON {
 	ms := func(d time.Duration) int64 { return d.Milliseconds() }
-	return StatsJSON{P50: ms(s.P50), P95: ms(s.P95), P99: ms(s.P99), Min: ms(s.Min), Max: ms(s.Max)}
+	return StatsJSON{P50: ms(s.P50), P90: ms(s.P90), P95: ms(s.P95), P99: ms(s.P99), Min: ms(s.Min), Max: ms(s.Max)}
 }
 
 func floatStatsJSON(s FloatSummary) FloatStatsJSON {
@@ -38,7 +42,7 @@ func floatStatsJSON(s FloatSummary) FloatStatsJSON {
 }
 
 func intStatsJSON(s IntSummary) StatsJSON {
-	return StatsJSON{P50: int64(s.P50), P95: int64(s.P95), P99: int64(s.P99), Min: int64(s.Min), Max: int64(s.Max)}
+	return StatsJSON{P50: int64(s.P50), P90: int64(s.P90), P95: int64(s.P95), P99: int64(s.P99), Min: int64(s.Min), Max: int64(s.Max)}
 }
 
 // TokensJSON holds token-count summaries.
@@ -86,55 +90,131 @@ func BuildCompatJSON(model, baseURL, apiFormat string, stream bool, results []Ca
 	return rep
 }
 
+// RequestJSON is one benchmark request in JSON form, kept per request so the
+// vendor benchmark's per-request statistics can be recomputed. TPOTMS is the
+// decode time per output token, (total - ttft) / completion_tokens, matching
+// the vendor's TPOT definition; OTPS is its reciprocal.
+type RequestJSON struct {
+	TTFBMS           int64   `json:"ttfb_ms,omitempty"`
+	TTFTMS           int64   `json:"ttft_ms,omitempty"`
+	TotalMS          int64   `json:"total_ms"`
+	TPOTMS           float64 `json:"tpot_ms,omitempty"`
+	OTPS             float64 `json:"otps,omitempty"`
+	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	CachedTokens     int     `json:"cached_tokens,omitempty"`
+	ReasoningTokens  int     `json:"reasoning_tokens,omitempty"`
+	Chunks           int     `json:"chunks,omitempty"`
+	Error            string  `json:"error,omitempty"`
+}
+
+// requestJSON converts one per-request observation. Failed requests carry
+// their error and no derived rates.
+func requestJSON(m registry.Metrics) RequestJSON {
+	j := RequestJSON{
+		TTFBMS:           m.TTFB.Milliseconds(),
+		TTFTMS:           m.TTFT.Milliseconds(),
+		TotalMS:          m.Total.Milliseconds(),
+		PromptTokens:     m.PromptTokens,
+		CompletionTokens: m.CompletionTokens,
+		CachedTokens:     m.CachedTokens,
+		ReasoningTokens:  m.ReasoningTokens,
+		Chunks:           m.Chunks,
+	}
+	if m.Err != nil {
+		j.Error = m.Err.Error()
+		return j
+	}
+	if decode := m.Total - m.TTFT; decode > 0 && m.CompletionTokens > 0 {
+		j.TPOTMS = float64(decode) / float64(time.Millisecond) / float64(m.CompletionTokens)
+		j.OTPS = float64(m.CompletionTokens) / decode.Seconds()
+	}
+	return j
+}
+
 // BenchmarkJSONReport is one benchmark run.
 type BenchmarkJSONReport struct {
-	Model           string          `json:"model"`
-	BaseURL         string          `json:"base_url"`
-	APIFormat       string          `json:"api_format"`
-	CaseID          string          `json:"case_id"`
-	Mode            string          `json:"mode"`   // latency | throughput
-	Prompt          string          `json:"prompt"` // pong | long
-	Stream          bool            `json:"stream"`
-	Iterations      int             `json:"iterations"`
-	Concurrency     int             `json:"concurrency"`
-	TotalRequests   int             `json:"total_requests"` // iterations * concurrency
-	Failed          int             `json:"failed"`
-	Errors          []string        `json:"errors,omitempty"` // per-request error text of failed requests
-	TTFB            *StatsJSON      `json:"ttfb,omitempty"`   // omitted when !stream
-	TTFT            *StatsJSON      `json:"ttft,omitempty"`
-	Total           StatsJSON       `json:"total"`
-	TPOT            *StatsJSON      `json:"tpot,omitempty"` // throughput mode, streamed
-	TPS             *FloatStatsJSON `json:"tps,omitempty"`
-	Tokens          *TokensJSON     `json:"tokens,omitempty"`
-	AvgContentBytes int64           `json:"avg_content_bytes,omitempty"`
-	AvgChunks       int64           `json:"avg_chunks,omitempty"`
-	RPS             float64         `json:"rps"`
-	TokensPerSec    float64         `json:"tokens_per_sec,omitempty"`
-	ElapsedMS       int64           `json:"elapsed_ms"`
+	Model             string          `json:"model"`
+	BaseURL           string          `json:"base_url"`
+	APIFormat         string          `json:"api_format"`
+	CaseID            string          `json:"case_id"`
+	Mode              string          `json:"mode"`   // latency | throughput
+	Prompt            string          `json:"prompt"` // pong | long | filler
+	Stream            bool            `json:"stream"`
+	Iterations        int             `json:"iterations"`
+	Concurrency       int             `json:"concurrency"`
+	TotalRequests     int             `json:"total_requests"` // iterations * concurrency
+	Failed            int             `json:"failed"`
+	Errors            []string        `json:"errors,omitempty"` // per-request error text of failed requests
+	TTFB              *StatsJSON      `json:"ttfb,omitempty"`   // omitted when !stream
+	TTFT              *StatsJSON      `json:"ttft,omitempty"`
+	Total             StatsJSON       `json:"total"`
+	TPOT              *StatsJSON      `json:"tpot,omitempty"` // throughput mode, streamed
+	TPS               *FloatStatsJSON `json:"tps,omitempty"`
+	Tokens            *TokensJSON     `json:"tokens,omitempty"`
+	InputTokens       int             `json:"input_tokens,omitempty"`
+	InputTokensPerSec float64         `json:"input_tokens_per_sec,omitempty"`
+	CachedTokens      int             `json:"cached_tokens,omitempty"`
+	CacheHitRate      float64         `json:"cache_hit_rate,omitempty"`
+	AvgContentBytes   int64           `json:"avg_content_bytes,omitempty"`
+	AvgChunks         int64           `json:"avg_chunks,omitempty"`
+	RPS               float64         `json:"rps"`
+	TokensPerSec      float64         `json:"tokens_per_sec,omitempty"`
+	ElapsedMS         int64           `json:"elapsed_ms"`
+	Requests          []RequestJSON   `json:"requests,omitempty"`
+	// Rate mode (--rps) offering stats; omitted for wave-based runs.
+	OfferedRPS  float64    `json:"offered_rps,omitempty"`
+	DurationMS  int64      `json:"duration_ms,omitempty"`
+	Sent        int        `json:"sent,omitempty"`
+	Shed        int        `json:"shed,omitempty"`
+	HTTP429     int        `json:"http_429,omitempty"`
+	HTTP5xx     int        `json:"http_5xx,omitempty"`
+	Incomplete  int        `json:"incomplete,omitempty"`
+	AchievedRPS float64    `json:"achieved_rps,omitempty"`
+	InFlight    *StatsJSON `json:"in_flight,omitempty"`
 }
 
 // JSON converts a benchmark report into machine-readable form. Stream-only
 // and throughput-only indicators are omitted when not meaningful.
 func (r BenchmarkReport) JSON(model, baseURL, apiFormat string) BenchmarkJSONReport {
 	j := BenchmarkJSONReport{
-		Model:           model,
-		BaseURL:         baseURL,
-		APIFormat:       apiFormat,
-		CaseID:          r.CaseID,
-		Mode:            r.Mode,
-		Prompt:          r.Prompt,
-		Stream:          r.Stream,
-		Iterations:      r.Iterations,
-		Concurrency:     r.Concurrency,
-		TotalRequests:   r.TotalRequests,
-		Failed:          r.Failed,
-		Errors:          r.Errors,
-		Total:           statsJSON(r.Total),
-		AvgContentBytes: r.AvgContentBytes,
-		AvgChunks:       r.AvgChunks,
-		RPS:             r.RPS,
-		TokensPerSec:    r.TokensPerSec,
-		ElapsedMS:       r.Elapsed.Milliseconds(),
+		Model:             model,
+		BaseURL:           baseURL,
+		APIFormat:         apiFormat,
+		CaseID:            r.CaseID,
+		Mode:              r.Mode,
+		Prompt:            r.Prompt,
+		Stream:            r.Stream,
+		Iterations:        r.Iterations,
+		Concurrency:       r.Concurrency,
+		TotalRequests:     r.TotalRequests,
+		Failed:            r.Failed,
+		Errors:            r.Errors,
+		Total:             statsJSON(r.Total),
+		InputTokens:       r.InputTokens,
+		InputTokensPerSec: r.InputTokensPerSec,
+		CachedTokens:      r.CachedTokens,
+		CacheHitRate:      r.CacheHitRate,
+		AvgContentBytes:   r.AvgContentBytes,
+		AvgChunks:         r.AvgChunks,
+		RPS:               r.RPS,
+		TokensPerSec:      r.TokensPerSec,
+		ElapsedMS:         r.Elapsed.Milliseconds(),
+	}
+	for _, m := range r.Samples {
+		j.Requests = append(j.Requests, requestJSON(m))
+	}
+	if r.OfferedRPS > 0 {
+		j.OfferedRPS = r.OfferedRPS
+		j.DurationMS = r.Duration.Milliseconds()
+		j.Sent = r.Sent
+		j.Shed = r.Shed
+		j.HTTP429 = r.HTTP429
+		j.HTTP5xx = r.HTTP5xx
+		j.Incomplete = r.Incomplete
+		j.AchievedRPS = r.AchievedRPS
+		inf := intStatsJSON(r.InFlight)
+		j.InFlight = &inf
 	}
 	if r.Stream {
 		ttfb := statsJSON(r.TTFB)

@@ -20,7 +20,7 @@ func Format() registry.Format {
 			}
 		},
 		Benchmark: func(p registry.Params) registry.BenchmarkCase {
-			return &BenchmarkCase{client: New(p.Config.BaseURL, p.Config.APIKey, p.Debug, p.Stream)}
+			return &BenchmarkCase{client: New(p.Config.BaseURL, p.Config.APIKey, p.Debug, p.Stream), maxTokens: p.MaxOutputTokens}
 		},
 		Cache: func(p registry.Params) registry.CacheCase {
 			return &CacheCase{client: New(p.Config.BaseURL, p.Config.APIKey, p.Debug, false)} // always non-streamed

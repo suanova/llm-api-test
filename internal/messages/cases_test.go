@@ -223,6 +223,28 @@ func TestBenchmarkCapsMaxTokens(t *testing.T) {
 	}
 }
 
+// TestBenchmarkMaxTokensFromParams covers --max-output-tokens for messages:
+// the cap travels through Params into the benchmark request.
+func TestBenchmarkMaxTokensFromParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if req.MaxTokens != 64 {
+			t.Errorf("request max_tokens = %d, want 64", req.MaxTokens)
+		}
+		msgStream(w, "a")
+	}))
+	defer server.Close()
+
+	bc := Format().Benchmark(registry.Params{
+		Config:          &config.Config{BaseURL: server.URL, APIKey: "k"},
+		Stream:          true,
+		MaxOutputTokens: 64,
+	})
+	if m := bc.Run(context.Background(), "m", "p"); m.Err != nil {
+		t.Fatalf("unexpected error: %v", m.Err)
+	}
+}
+
 func TestBenchmarkMetrics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		msgStream(w, "a", "b", "c")
