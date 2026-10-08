@@ -182,7 +182,7 @@ Failures print the reason instead of the pass detail:
 
 The `latency` and `throughput` commands run `iterations` waves of
 `concurrency` parallel streamed requests and report percentiles
-(p50/p95/p99/min/max).
+(p50/p90/p95/p99/min/max).
 
 ```bash
 # latency benchmark (prompt: "Reply with exactly the word: pong")
@@ -193,6 +193,38 @@ The `latency` and `throughput` commands run `iterations` waves of
 
 # only Chat Completions; custom iterations/concurrency
 ./llm-api-test throughput --api-format chat --iterations 10 --concurrency 5
+
+# long-context tier run: ~8k-token filler prompt, output capped at ~1/100
+./llm-api-test throughput --input-tokens 8000 --max-output-tokens 80
+```
+
+Three flags shape the load:
+
+- `--input-tokens N` replaces the built-in prompt with a deterministic filler
+  prompt of about N tokens (English ≈ 1.33 tokens per word). The provider's
+  `usage` reports the real input size; the report labels the run
+  `filler:<N>`. This backs long-context tier runs that mirror a vendor
+  benchmark's fixed input sizes.
+- `--max-output-tokens M` caps generation per request (default 4096). Combined
+  with `--input-tokens` it pins a fixed input:output ratio (e.g. 100:1).
+- `--reasoning-effort E` passes a reasoning-effort value to reasoning-capable
+  formats (chat `reasoning_effort`, responses `reasoning.effort`); empty
+  leaves the provider default. `none` disables thinking on reasoning models —
+  needed for tier runs, because reasoning tokens otherwise consume the whole
+  output cap and no answer is produced.
+
+A **rate-controlled mode** (`--rps N --duration T`) turns either benchmark
+into a sustained-load capacity run: requests are offered at N/s in open loop
+(ticks do not wait for completions) for T, with in-flight capped at
+`--max-in-flight` (default 1024; ticks above the cap are counted as *shed*
+instead of silently throttling the offered load). The report adds
+offered/achieved rate, sent/shed/completed, HTTP 429/5xx tallies, and the
+in-flight distribution; requests still running when the drain budget expires
+are counted as *incomplete*.
+
+```bash
+# sustained 20 req/s for 3 minutes (RPM-style capacity check)
+./llm-api-test latency --rps 20 --duration 3m --input-tokens 1000 --max-output-tokens 10 --reasoning-effort none
 ```
 
 Both default to `--api-format chat` and run one format per invocation: the
@@ -201,11 +233,13 @@ so each one you add multiplies the run rather than refining a single number.
 `--api-format all` adds responses and messages, at 3x the requests.
 
 - `latency` reports TTFB/TTFT/Total;
-- `throughput` additionally reports TPOT, TPS, and token counts.
+- `throughput` additionally reports TPOT, TPS, token counts, input tok/s, and
+  observed cache reads (all from `usage`; streamed requests ask for it via
+  `stream_options.include_usage`).
 
 With `--no-stream`, TTFB/TTFT/TPOT are omitted (they require streaming) and `throughput` falls back to tokens/s from usage.
 
-Benchmark requests cap generation at 4096 tokens (`max_completion_tokens` for chat, `max_output_tokens` for responses, `max_tokens` for messages) so a thorough prompt cannot run unbounded; the benchmark context timeout (120s per request, minimum 10 minutes) is the backstop. While a benchmark runs, a live status line is printed to stderr (`[benchmark] elapsed 5s, 3/10 requests completed`) and cleared when the report prints.
+Benchmark requests cap generation at `--max-output-tokens` (default 4096; `max_completion_tokens` for chat, `max_output_tokens` for responses, `max_tokens` for messages) so a thorough prompt cannot run unbounded; the benchmark context timeout (120s per request, minimum 10 minutes) is the backstop. While a benchmark runs, a live status line is printed to stderr (`[benchmark] elapsed 5s, 3/10 requests completed`) and cleared when the report prints.
 
 #### Output
 
@@ -213,34 +247,37 @@ Latency mode:
 
 ```
 base_url: https://api.openai.com/v1  model: gpt-4o-mini
-iterations=10  concurrency=5  prompt=Reply with exactly the word: pong
+iterations=10  concurrency=5  prompt=pong
 
   chat:benchmark  (10 iters x 5 concurrency = 50 requests)
-    TTFB:  p50=180ms p95=410ms p99=590ms min=120ms max=620ms
-    TTFT:  p50=210ms p95=450ms p99=620ms min=150ms max=680ms
-    Total: p50=380ms p95=620ms p99=890ms min=250ms max=950ms
+    TTFB:  p50=180ms p90=310ms p95=410ms p99=590ms min=120ms max=620ms
+    TTFT:  p50=210ms p90=340ms p95=450ms p99=620ms min=150ms max=680ms
+    Total: p50=380ms p90=520ms p95=620ms p99=890ms min=250ms max=950ms
     RPS:    11.9 req/s
     Failed: 0/50
     Elapsed: 4.2s
 ```
 
-Throughput mode adds TPOT/TPS/Tokens/Output:
+Throughput mode adds TPOT/TPS/Tokens/Output and the usage-derived input and
+cache lines:
 
 ```
   chat:benchmark  (10 iters x 5 concurrency = 50 requests)
-    TTFB:  p50=180ms p95=410ms p99=590ms min=120ms max=620ms
-    TTFT:  p50=210ms p95=450ms p99=620ms min=150ms max=680ms
-    Total: p50=1.2s p95=2.1s p99=2.8s min=900ms max=3.1s
-    TPOT:  p50=18.5ms p95=24.2ms p99=32.1ms min=12.0ms max=38.5ms
-    TPS:   p50=54.0  p95=41.0  p99=31.0  min=26.0  max=83.0 tok/s
-    Tokens: completion p50=52 p95=58 p99=64  prompt p50=15 p95=15 p99=15
+    TTFB:  p50=180ms p90=310ms p95=410ms p99=590ms min=120ms max=620ms
+    TTFT:  p50=210ms p90=340ms p95=450ms p99=620ms min=150ms max=680ms
+    Total: p50=1.2s p90=1.8s p95=2.1s p99=2.8s min=900ms max=3.1s
+    TPOT:  p50=18.5ms p90=22.0ms p95=24.2ms p99=32.1ms min=12.0ms max=38.5ms
+    TPS:   p50=54.0  p90=45.5  p95=41.0  p99=31.0  min=26.0  max=83.0 tok/s
+    Tokens: completion p50=52 p90=56 p95=58 p99=64  prompt p50=15 p90=15 p95=15 p99=15
     Output: avg_content=234 bytes  avg_chunks=52
+    Input:  1234.5 tok/s (from usage)
+    Cache:  4970/5030 prompt tokens (98.8%) read from cache
     RPS:    11.9 req/s
     Failed: 0/50
     Elapsed: 15.2s
 ```
 
-`-o report.json` writes machine-readable JSON reports (one object per model/format run); see `docs/design.md` for the schema.
+`-o report.json` writes machine-readable JSON reports (one object per model/format run), including a per-request array (`requests[]`) with the vendor-comparable per-request figures (tpot_ms, otps, token counts, cache reads) so percentile and SLO math can be recomputed from the raw data; see `docs/design.md` for the schema.
 
 ### Cache hit rate
 
