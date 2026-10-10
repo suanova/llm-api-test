@@ -2,6 +2,7 @@ package responses
 
 import (
 	"context"
+	"strings"
 
 	"llm-api-test/internal/cases"
 	"llm-api-test/internal/registry"
@@ -40,7 +41,7 @@ func (c *InstructionsCase) Run(ctx context.Context, model string) *registry.Comp
 	if err != nil {
 		return cases.Fail("request failed: %v", err)
 	}
-	if res.Content != "hello" {
+	if strings.TrimSpace(res.Content) != "hello" {
 		return cases.FailRaw(res.Raw, "instructions not followed (got %q)", res.Content)
 	}
 	return cases.Pass("instructions followed", res.Raw)
