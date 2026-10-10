@@ -5,6 +5,9 @@
 config*.yaml
 !config.example.yaml
 
+# Upsteam Test Reports
+upstream-repoorts
+
 # AI helper
 .codegraph
 .superpowers
