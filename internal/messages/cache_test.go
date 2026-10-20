@@ -10,6 +10,9 @@ import (
 )
 
 // cacheUsage is the non-streamed JSON body the fake server replies with.
+// input is the uncached remainder, matching the Anthropic Messages API: the
+// total prompt is input_tokens + cache_read_input_tokens +
+// cache_creation_input_tokens.
 func cacheUsage(cached, written, input int) string {
 	return `{"content":[{"type":"text","text":"answer"}],"usage":{"input_tokens":` + jsonInt(input) + `,"output_tokens":20,"cache_creation_input_tokens":` + jsonInt(written) + `,"cache_read_input_tokens":` + jsonInt(cached) + `}}`
 }
@@ -73,9 +76,9 @@ func TestCacheSession(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		if turn == 1 {
-			io.WriteString(w, cacheUsage(0, 5000, 5000))
+			io.WriteString(w, cacheUsage(0, 5000, 0))
 		} else {
-			io.WriteString(w, cacheUsage(4970, 0, 5030))
+			io.WriteString(w, cacheUsage(4970, 0, 60))
 		}
 	}))
 	defer server.Close()
@@ -98,6 +101,26 @@ func TestCacheSession(t *testing.T) {
 		if tr.Total <= 0 {
 			t.Errorf("turn %d: Total not recorded", i+1)
 		}
+	}
+}
+
+// TestCacheSessionReportsTotalPrompt pins the Anthropic usage translation:
+// input_tokens is only the uncached remainder, so PromptTokens must include
+// cache reads and writes.
+func TestCacheSessionReportsTotalPrompt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, cacheUsage(1000, 50, 100))
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, false)
+	turns := (&CacheCase{client: client}).RunSession(context.Background(), "m", 1, nil)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1", len(turns))
+	}
+	if turns[0].PromptTokens != 1150 || turns[0].Cached != 1000 || turns[0].CacheWrite != 50 {
+		t.Errorf("turn = %+v, want prompt=1150 cached=1000 written=50", turns[0])
 	}
 }
 

@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"strings"
 
 	"llm-api-test/internal/cases"
 	"llm-api-test/internal/registry"
@@ -37,7 +38,7 @@ func (c *SystemCase) Run(ctx context.Context, model string) *registry.CompatResu
 	if err != nil {
 		return cases.Fail("request failed: %v", err)
 	}
-	if res.Content != "hello" {
+	if strings.TrimSpace(res.Content) != "hello" {
 		return cases.FailRaw(res.Raw, "system prompt not followed (got %q)", res.Content)
 	}
 	return cases.Pass("system prompt followed", res.Raw)

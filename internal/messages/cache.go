@@ -51,7 +51,9 @@ func (c *CacheCase) RunSession(ctx context.Context, model string, turns int, pro
 		}
 		turn.Total = time.Since(start)
 		if res.Usage != nil {
-			turn.PromptTokens = res.Usage.InputTokens
+			// Anthropic reports input_tokens as the uncached remainder; the
+			// total prompt is input + cache read + cache creation.
+			turn.PromptTokens = res.Usage.InputTokens + res.Usage.CacheReadInputTokens + res.Usage.CacheCreationInputTokens
 			turn.Cached = res.Usage.CacheReadInputTokens
 			turn.CacheWrite = res.Usage.CacheCreationInputTokens
 		}

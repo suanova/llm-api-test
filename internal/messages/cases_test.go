@@ -117,6 +117,22 @@ func TestSystem(t *testing.T) {
 	}
 }
 
+// TestSystemTrimsWhitespace covers providers that wrap the exact-match reply
+// in blank lines; the assertion must compare trimmed content, matching the
+// chat system-message case.
+func TestSystemTrimsWhitespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		msgStream(w, "\n\nhello")
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-key", nil, true)
+	res := (&SystemCase{client: client}).Run(context.Background(), "m")
+	if !res.Pass {
+		t.Fatalf("expected pass, got: %s", res.Detail)
+	}
+}
+
 func TestThinking(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := decodeRequest(t, r)
